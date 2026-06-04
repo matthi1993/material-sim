@@ -34,7 +34,7 @@ struct VSOut {
   @location(0)       cross : f32, // -1..1 across the cylinder width
 };
 
-const BOND_RADIUS = 0.012; // nm
+const BOND_RADIUS = 0.003; // nm
 
 @vertex
 fn vs(
