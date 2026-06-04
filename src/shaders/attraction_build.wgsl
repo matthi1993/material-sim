@@ -3,7 +3,8 @@
 // never duplicated). For every oppositely-charged atom in a different molecule
 // within the cutoff, the Coulomb attraction magnitude k*|qi*qj|/r^2 is compared
 // against a threshold; pairs above it are appended (atomic counter) as index
-// pairs the line render pass reads back without any CPU readback.
+// pairs the line render pass reads back without any CPU readback. A per-segment
+// opacity (0..1) is also stored so the render pass can fade weak bonds in/out.
 
 struct Viz {
   box       : vec3<f32>,
@@ -47,10 +48,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fmag = viz.coulombK * (-qi * qj) / r2; // attraction magnitude
     if (fmag < viz.threshold) { continue; }
 
+    // Fade from the emission threshold up to ~2.5x threshold (fully opaque).
+    let alpha = clamp((fmag - viz.threshold) / (viz.threshold * 1.5), 0.06, 1.0);
+
     let idx = atomicAdd(&segCount, 1u);
     if (idx < viz.maxSeg) {
-      segPairs[idx * 2u] = i;
-      segPairs[idx * 2u + 1u] = j;
+      segPairs[idx * 3u] = i;
+      segPairs[idx * 3u + 1u] = j;
+      segPairs[idx * 3u + 2u] = bitcast<u32>(alpha);
     }
   }
 }

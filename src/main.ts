@@ -14,6 +14,7 @@ const app = document.querySelector<SimApp>('sim-app')!
 let engine: SimulationEngine | null = null
 let renderer: Renderer | null = null
 let restarting = false
+let currentRuntime = { ...DEFAULT_RUNTIME }
 
 async function restart(config: SimConfig): Promise<void> {
   if (restarting) return
@@ -37,8 +38,10 @@ async function restart(config: SimConfig): Promise<void> {
     const { params, topology, initial } = buildWaterSystem(config)
     const runtime = {
       ...DEFAULT_RUNTIME,
+      ...currentRuntime,
       targetTemperature: config.temperature,
     }
+    currentRuntime = runtime
 
     await engine.start(params, topology, initial, runtime)
     app.running = true
@@ -52,6 +55,12 @@ async function restart(config: SimConfig): Promise<void> {
 
 app.addEventListener('config-change', (e) => {
   void restart((e as CustomEvent<SimConfig>).detail)
+})
+
+app.addEventListener('runtime-change', (e) => {
+  const { stepsPerFrame } = (e as CustomEvent<{ stepsPerFrame: number }>).detail
+  currentRuntime = { ...currentRuntime, stepsPerFrame }
+  engine?.setRuntime(currentRuntime)
 })
 
 app.addEventListener('toggle-run', () => {

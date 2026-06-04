@@ -64,14 +64,14 @@ export function buildWaterSystem(config: SimConfig): BuiltSystem {
   const rand = mulberry32(0x9e3779b9)
   const gauss = makeGaussian(rand)
 
+  const halfHOH = ff.water.hohAngle / 2
+  const d = ff.water.ohDistance
+
   // Lattice that fits nMol sites inside the box.
   const perSide = Math.ceil(Math.cbrt(nMol))
   const sx = bx / perSide
   const sy = by / perSide
   const sz = bz / perSide
-
-  const halfHOH = ff.water.hohAngle / 2
-  const d = ff.water.ohDistance
 
   let placed = 0
   for (let gz = 0; gz < perSide && placed < nMol; gz++) {

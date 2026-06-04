@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { customElement, property, query, state } from 'lit/decorators.js'
-import { DEFAULT_CONFIG, TIP3P, type SimConfig } from '../../sim/params'
+import { DEFAULT_CONFIG, DEFAULT_RUNTIME, TIP3P, type SimConfig } from '../../sim/params'
 import type { SimStats } from '../../sim/types'
 import { formatStats } from '../stats'
 
@@ -21,6 +21,7 @@ export class SimApp extends LitElement {
   @state() private temp = DEFAULT_CONFIG.temperature
   @state() private cutoff = DEFAULT_CONFIG.cutoffRadius
   @state() private dtFs = DEFAULT_CONFIG.dt * 1000 // fs in the UI
+  @state() private speed = DEFAULT_RUNTIME.stepsPerFrame
 
   @query('canvas') private canvasEl!: HTMLCanvasElement
 
@@ -55,6 +56,18 @@ export class SimApp extends LitElement {
     )
   }
 
+  /** Live simulation speed change — applies without restarting the system. */
+  private setSpeed(v: number): void {
+    this.speed = Math.max(1, Math.round(v))
+    this.dispatchEvent(
+      new CustomEvent('runtime-change', {
+        detail: { stepsPerFrame: this.speed },
+        bubbles: true,
+        composed: true,
+      }),
+    )
+  }
+
   firstUpdated(): void {
     // Kick off the first run once the canvas exists.
     this.apply()
@@ -69,11 +82,23 @@ export class SimApp extends LitElement {
     onInput: (v: number) => void,
     unit = '',
   ) {
+    const clamp = (v: number) => Math.min(max, Math.max(min, v))
     return html`
       <label class="field">
         <span class="label-row">
-          <span>${label}</span>
-          <span class="value">${value}${unit ? ` ${unit}` : ''}</span>
+          <span>${label}${unit ? ` (${unit})` : ''}</span>
+          <input
+            class="value-input"
+            type="number"
+            min=${min}
+            max=${max}
+            step=${step}
+            .value=${String(value)}
+            @change=${(e: Event) => {
+              const v = clamp(Number((e.target as HTMLInputElement).value))
+              onInput(v)
+            }}
+          />
         </span>
         <input
           type="range"
@@ -98,13 +123,14 @@ export class SimApp extends LitElement {
         <p class="subtitle">TIP3P water · GPU MD</p>
 
         <div class="group">
-          ${this.num('Molecules', this.mols, 8, 1000, 1, (v) => (this.mols = v))}
-          ${this.num('Box X', this.bx, 1, 6, 0.1, (v) => (this.bx = v), 'nm')}
-          ${this.num('Box Y', this.by, 1, 6, 0.1, (v) => (this.by = v), 'nm')}
-          ${this.num('Box Z', this.bz, 1, 6, 0.1, (v) => (this.bz = v), 'nm')}
-          ${this.num('Cutoff', this.cutoff, 0.6, 1.2, 0.05, (v) => (this.cutoff = v), 'nm')}
-          ${this.num('Temperature', this.temp, 1, 600, 1, (v) => (this.temp = v), 'K')}
-          ${this.num('Timestep', this.dtFs, 0.2, 1.0, 0.1, (v) => (this.dtFs = v), 'fs')}
+          ${this.num('Molecules', this.mols, 8, 8000, 1, (v) => (this.mols = v))}
+          ${this.num('Box X', this.bx, 1, 20, 0.1, (v) => (this.bx = v), 'nm')}
+          ${this.num('Box Y', this.by, 1, 20, 0.1, (v) => (this.by = v), 'nm')}
+          ${this.num('Box Z', this.bz, 1, 20, 0.1, (v) => (this.bz = v), 'nm')}
+          ${this.num('Cutoff', this.cutoff, 0.3, 2.0, 0.05, (v) => (this.cutoff = v), 'nm')}
+          ${this.num('Temperature', this.temp, 1, 2000, 1, (v) => (this.temp = v), 'K')}
+          ${this.num('Timestep', this.dtFs, 0.1, 5.0, 0.1, (v) => (this.dtFs = v), 'fs')}
+          ${this.num('Speed', this.speed, 1, 64, 1, (v) => this.setSpeed(v), 'steps/frame')}
         </div>
 
         <div class="actions">
@@ -181,6 +207,22 @@ export class SimApp extends LitElement {
     .value {
       color: var(--color-text);
       font-family: var(--font-mono);
+    }
+    .value-input {
+      width: 5.5em;
+      padding: 2px 4px;
+      box-sizing: border-box;
+      text-align: right;
+      color: var(--color-text);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: var(--color-bg);
+      border: 1px solid var(--color-panel-border);
+      border-radius: var(--radius);
+    }
+    .value-input:focus {
+      outline: none;
+      border-color: var(--color-accent);
     }
     input[type='range'] {
       width: 100%;

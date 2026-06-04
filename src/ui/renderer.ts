@@ -51,7 +51,11 @@ export class Renderer {
 
     const worldUp: Vec3 = [0, 1, 0]
     const { view, right, up } = lookAt(eye, this.target, worldUp)
-    const proj = perspectiveZO((50 * Math.PI) / 180, aspect, 0.05, 1000)
+    // Orthographic: vertical extent scales with camera distance so the wheel
+    // still zooms. No perspective foreshortening.
+    const halfH = this.distance * 0.5
+    const halfW = halfH * aspect
+    const proj = orthographicZO(-halfW, halfW, -halfH, halfH, 0.05, 1000)
     const viewProj = multiply(proj, view)
 
     return { viewProj, right, up }
@@ -141,21 +145,23 @@ function lookAt(
   return { view, right: s, up: u }
 }
 
-/** Perspective with z mapped to [0, 1] (WebGPU clip space), column-major. */
-function perspectiveZO(
-  fovy: number,
-  aspect: number,
+/** Orthographic with z mapped to [0, 1] (WebGPU clip space), column-major. */
+function orthographicZO(
+  left: number,
+  right: number,
+  bottom: number,
+  top: number,
   near: number,
   far: number,
 ): Float32Array {
-  const f = 1 / Math.tan(fovy / 2)
-  const nf = 1 / (near - far)
   const m = new Float32Array(16)
-  m[0] = f / aspect
-  m[5] = f
-  m[10] = far * nf
-  m[11] = -1
-  m[14] = far * near * nf
+  m[0] = 2 / (right - left)
+  m[5] = 2 / (top - bottom)
+  m[10] = 1 / (near - far)
+  m[12] = -(right + left) / (right - left)
+  m[13] = -(top + bottom) / (top - bottom)
+  m[14] = near / (near - far)
+  m[15] = 1
   return m
 }
 

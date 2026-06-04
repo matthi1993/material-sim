@@ -30,8 +30,9 @@ const CAMERA_BYTES = 96
 const VIZ_BYTES = 32
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
 // Coulomb attraction magnitude (kJ/mol/nm) above which a pair is drawn as a
-// line. ~700 corresponds to an O...H separation of ~0.26 nm (hydrogen bonds).
-const ATTRACTION_THRESHOLD = 700
+// line. ~450 catches forming hydrogen bonds; weaker ones fade in toward full
+// opacity around ~2.5x this value (see attraction_build.wgsl).
+const ATTRACTION_THRESHOLD = 450
 
 export class WebGPUBackend implements IGPUBackend {
   private readonly canvas: HTMLCanvasElement
@@ -227,7 +228,7 @@ export class WebGPUBackend implements IGPUBackend {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
     this.segPairsBuffer = d.createBuffer({
-      size: this.maxSeg * 2 * 4,
+      size: this.maxSeg * 3 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
 
@@ -449,12 +450,28 @@ export class WebGPUBackend implements IGPUBackend {
       fragment: {
         module,
         entryPoint: 'fs',
-        targets: [{ format: this.format }],
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            },
+          },
+        ],
       },
       primitive: { topology: 'line-list' },
       depthStencil: {
         format: 'depth24plus',
-        depthWriteEnabled: true,
+        depthWriteEnabled: false,
         depthCompare: 'less',
       },
     })

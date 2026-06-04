@@ -32,6 +32,7 @@ fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
 struct VSOut {
   @builtin(position) clip  : vec4<f32>,
   @location(0)       color : vec3<f32>,
+  @location(1)       alpha : f32,
 };
 
 @vertex
@@ -41,14 +42,16 @@ fn vs(
 ) -> VSOut {
   var out: VSOut;
   out.color = vec3<f32>(0.35, 0.85, 1.0);
+  out.alpha = 1.0;
 
   if (ii >= segCount[0]) {
     out.clip = vec4<f32>(10.0, 10.0, 10.0, 1.0); // off-screen -> clipped
     return out;
   }
 
-  let ia = segPairs[ii * 2u];
-  let ib = segPairs[ii * 2u + 1u];
+  let ia = segPairs[ii * 3u];
+  let ib = segPairs[ii * 3u + 1u];
+  out.alpha = bitcast<f32>(segPairs[ii * 3u + 2u]);
   let a = pos[ia].xyz;
   let b = a - minImage(a - pos[ib].xyz, viz.box); // nearest image of partner
 
@@ -59,5 +62,5 @@ fn vs(
 
 @fragment
 fn fs(in: VSOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 1.0);
+  return vec4<f32>(in.color, in.alpha);
 }

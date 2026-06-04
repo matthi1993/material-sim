@@ -36,10 +36,10 @@ fn vs(
   let center = pos[ii].xyz;
   let typeId = atomParams[ii].w;
 
-  var radius = 0.035;                       // oxygen
+  var radius = 0.02;                       // oxygen
   var color = vec3<f32>(0.91, 0.23, 0.17);
   if (typeId > 0.5) {                       // hydrogen
-    radius = 0.025;
+    radius = 0.01;
     color = vec3<f32>(0.93, 0.94, 0.97);
   }
 
