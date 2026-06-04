@@ -64,13 +64,16 @@ export interface SimConfig {
   temperature: number // K
 }
 
+// Liquid water at ~298 K has a number density of ~33.4 molecules/nm^3
+// (density ~997 kg/m^3, molar mass 18.015 g/mol). A 2 nm cubic box (8 nm^3)
+// therefore holds ~267 molecules at realistic room-temperature density.
 export const DEFAULT_CONFIG: SimConfig = {
   forceField: TIP3P,
-  numMolecules: 200,
+  numMolecules: 267,
   box: [2.0, 2.0, 2.0],
   cutoffRadius: 0.9,
   dt: 0.0005,
-  temperature: 300,
+  temperature: 298,
 }
 
 export const DEFAULT_RUNTIME: RuntimeConfig = {

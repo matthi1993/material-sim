@@ -19,12 +19,19 @@ import integrateVelWgsl from '../../shaders/integrate_vel.wgsl?raw'
 import thermoReduceWgsl from '../../shaders/thermostat_reduce.wgsl?raw'
 import thermoScaleWgsl from '../../shaders/thermostat_scale.wgsl?raw'
 import renderWgsl from '../../shaders/render.wgsl?raw'
+import bondWgsl from '../../shaders/bond.wgsl?raw'
+import attractionBuildWgsl from '../../shaders/attraction_build.wgsl?raw'
+import attractionWgsl from '../../shaders/attraction.wgsl?raw'
 import { KB } from '../params'
 
 const WORKGROUP_SIZE = 64
 const UNIFORM_BYTES = 64
 const CAMERA_BYTES = 96
+const VIZ_BYTES = 32
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
+// Coulomb attraction magnitude (kJ/mol/nm) above which a pair is drawn as a
+// line. ~700 corresponds to an O...H separation of ~0.26 nm (hydrogen bonds).
+const ATTRACTION_THRESHOLD = 700
 
 export class WebGPUBackend implements IGPUBackend {
   private readonly canvas: HTMLCanvasElement
@@ -36,6 +43,8 @@ export class WebGPUBackend implements IGPUBackend {
   private params!: SimParams
   private numAtoms = 0
   private numMol = 0
+  private numBonds = 0
+  private maxSeg = 0
 
   // Buffers
   private uniformBuffer!: GPUBuffer
@@ -45,6 +54,10 @@ export class WebGPUBackend implements IGPUBackend {
   private forceBuffer!: GPUBuffer
   private atomParamsBuffer!: GPUBuffer
   private reductionBuffer!: GPUBuffer
+  private vizUniformBuffer!: GPUBuffer
+  private bondPairsBuffer!: GPUBuffer
+  private segCountBuffer!: GPUBuffer
+  private segPairsBuffer!: GPUBuffer
 
   // Cached uniform bytes so hot-swappable fields can be patched in place.
   private uniformData!: ArrayBuffer
@@ -67,6 +80,12 @@ export class WebGPUBackend implements IGPUBackend {
   // Render
   private renderPipeline!: GPURenderPipeline
   private renderBindGroup!: GPUBindGroup
+  private bondPipeline!: GPURenderPipeline
+  private bondBindGroup!: GPUBindGroup
+  private attractionPipeline!: GPURenderPipeline
+  private attractionBindGroup!: GPUBindGroup
+  private attractionBuildPipeline!: GPUComputePipeline
+  private attractionBuildBindGroup!: GPUBindGroup
   private depthTexture: GPUTexture | null = null
   private depthSize = { w: 0, h: 0 }
 
@@ -99,9 +118,13 @@ export class WebGPUBackend implements IGPUBackend {
     })
 
     this.createBuffers(initial)
+    this.createVizBuffers(topology)
     this.writeUniforms(topology)
+    this.writeVizUniform()
     this.createComputePipelines()
     this.createRenderPipeline()
+    this.createBondPipeline()
+    this.createAttractionPipelines()
 
     // Compute a(t=0) so the first Velocity-Verlet half-kick is valid.
     this.computeForces()
@@ -178,6 +201,55 @@ export class WebGPUBackend implements IGPUBackend {
 
     this.uniformData = buf
     this.device.queue.writeBuffer(this.uniformBuffer, 0, buf)
+  }
+
+  /** Buffers used only by the visualization passes (bonds + attraction lines). */
+  private createVizBuffers(topology: Topology): void {
+    const d = this.device
+
+    // One index pair per intramolecular bond.
+    this.numBonds = topology.bonds.length
+    const bondPairs = new Uint32Array(Math.max(1, this.numBonds) * 2)
+    for (let b = 0; b < this.numBonds; b++) {
+      bondPairs[b * 2] = topology.bonds[b].i
+      bondPairs[b * 2 + 1] = topology.bonds[b].j
+    }
+    this.bondPairsBuffer = d.createBuffer({
+      size: bondPairs.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    d.queue.writeBuffer(this.bondPairsBuffer, 0, bondPairs)
+
+    // Dynamic attraction segments rebuilt on the GPU every frame.
+    this.maxSeg = Math.max(1, this.numAtoms * 4)
+    this.segCountBuffer = d.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.segPairsBuffer = d.createBuffer({
+      size: this.maxSeg * 2 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+
+    this.vizUniformBuffer = d.createBuffer({
+      size: VIZ_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    })
+  }
+
+  private writeVizUniform(): void {
+    const p = this.params
+    const buf = new ArrayBuffer(VIZ_BYTES)
+    const dv = new DataView(buf)
+    dv.setFloat32(0, p.box[0], true)
+    dv.setFloat32(4, p.box[1], true)
+    dv.setFloat32(8, p.box[2], true)
+    dv.setFloat32(12, p.coulombConstant, true)
+    dv.setFloat32(16, p.cutoffRadius * p.cutoffRadius, true)
+    dv.setFloat32(20, ATTRACTION_THRESHOLD, true)
+    dv.setUint32(24, p.numAtoms, true)
+    dv.setUint32(28, this.maxSeg, true)
+    this.device.queue.writeBuffer(this.vizUniformBuffer, 0, buf)
   }
 
   /** Hot-swappable thermostat control (RuntimeConfig, not SimParams). */
@@ -279,6 +351,115 @@ export class WebGPUBackend implements IGPUBackend {
     })
   }
 
+  private createBondPipeline(): void {
+    const d = this.device
+    const module = d.createShaderModule({ code: bondWgsl })
+
+    const layout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      ],
+    })
+
+    this.bondBindGroup = d.createBindGroup({
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: this.vizUniformBuffer } },
+        { binding: 2, resource: { buffer: this.posBuffer } },
+        { binding: 3, resource: { buffer: this.bondPairsBuffer } },
+      ],
+    })
+
+    this.bondPipeline = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: { module, entryPoint: 'vs' },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
+    })
+  }
+
+  private createAttractionPipelines(): void {
+    const d = this.device
+
+    // Compute pass: rebuild the attraction segment list.
+    const buildLayout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    })
+    this.attractionBuildBindGroup = d.createBindGroup({
+      layout: buildLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.vizUniformBuffer } },
+        { binding: 1, resource: { buffer: this.posBuffer } },
+        { binding: 2, resource: { buffer: this.atomParamsBuffer } },
+        { binding: 3, resource: { buffer: this.segCountBuffer } },
+        { binding: 4, resource: { buffer: this.segPairsBuffer } },
+      ],
+    })
+    this.attractionBuildPipeline = d.createComputePipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [buildLayout] }),
+      compute: {
+        module: d.createShaderModule({ code: attractionBuildWgsl }),
+        entryPoint: 'main',
+      },
+    })
+
+    // Render pass: draw the segments as lines.
+    const module = d.createShaderModule({ code: attractionWgsl })
+    const drawLayout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      ],
+    })
+    this.attractionBindGroup = d.createBindGroup({
+      layout: drawLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: this.vizUniformBuffer } },
+        { binding: 2, resource: { buffer: this.posBuffer } },
+        { binding: 3, resource: { buffer: this.segCountBuffer } },
+        { binding: 4, resource: { buffer: this.segPairsBuffer } },
+      ],
+    })
+    this.attractionPipeline = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [drawLayout] }),
+      vertex: { module, entryPoint: 'vs' },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'line-list' },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
+    })
+  }
+
   private atomGroups(): number {
     return Math.ceil(this.numAtoms / WORKGROUP_SIZE)
   }
@@ -345,7 +526,17 @@ export class WebGPUBackend implements IGPUBackend {
     this.writeCamera(camera)
     this.ensureDepth()
 
+    // Reset the attraction counter, then rebuild the segment list on the GPU.
+    this.device.queue.writeBuffer(this.segCountBuffer, 0, new Uint32Array([0]))
+
     const encoder = this.device.createCommandEncoder()
+
+    const build = encoder.beginComputePass()
+    build.setPipeline(this.attractionBuildPipeline)
+    build.setBindGroup(0, this.attractionBuildBindGroup)
+    build.dispatchWorkgroups(this.atomGroups())
+    build.end()
+
     const view = this.context.getCurrentTexture().createView()
     const pass = encoder.beginRenderPass({
       colorAttachments: [
@@ -363,9 +554,24 @@ export class WebGPUBackend implements IGPUBackend {
         depthStoreOp: 'store',
       },
     })
+
+    // Atoms (sphere impostors).
     pass.setPipeline(this.renderPipeline)
     pass.setBindGroup(0, this.renderBindGroup)
     pass.draw(6, this.numAtoms)
+
+    // Intramolecular bonds (cylinder impostors).
+    if (this.numBonds > 0) {
+      pass.setPipeline(this.bondPipeline)
+      pass.setBindGroup(0, this.bondBindGroup)
+      pass.draw(6, this.numBonds)
+    }
+
+    // Strong electrostatic attractions (lines).
+    pass.setPipeline(this.attractionPipeline)
+    pass.setBindGroup(0, this.attractionBindGroup)
+    pass.draw(2, this.maxSeg)
+
     pass.end()
     this.device.queue.submit([encoder.finish()])
   }
@@ -433,6 +639,10 @@ export class WebGPUBackend implements IGPUBackend {
     this.reductionBuffer?.destroy()
     this.uniformBuffer?.destroy()
     this.cameraBuffer?.destroy()
+    this.vizUniformBuffer?.destroy()
+    this.bondPairsBuffer?.destroy()
+    this.segCountBuffer?.destroy()
+    this.segPairsBuffer?.destroy()
     this.device?.destroy()
   }
 }
