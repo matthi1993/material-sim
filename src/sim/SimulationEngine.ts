@@ -1,0 +1,156 @@
+// Orchestrator. Owns the dispatch loop and run state. Talks to the GPU only
+// through IGPUBackend and never touches WebGPU types directly. Contains no
+// physics math — it only decides what runs and when.
+
+import type { IGPUBackend } from './backend/IGPUBackend'
+import { NeighborListManager } from './managers/NeighborListManager'
+import { ThermostatManager } from './managers/ThermostatManager'
+import type {
+  CameraView,
+  InitialState,
+  RuntimeConfig,
+  SimParams,
+  SimStats,
+  Topology,
+} from './types'
+
+export type CameraProvider = () => CameraView
+export type StatsListener = (stats: SimStats) => void
+
+export class SimulationEngine {
+  private readonly backend: IGPUBackend
+
+  private params: SimParams | null = null
+  private runtime: RuntimeConfig | null = null
+  private neighborList: NeighborListManager | null = null
+  private thermostat: ThermostatManager | null = null
+
+  private running = false
+  private rafHandle = 0
+
+  private cameraProvider: CameraProvider | null = null
+  private statsListener: StatsListener | null = null
+
+  // FPS tracking
+  private lastFrameTime = 0
+  private fps = 0
+
+  // Infrequent temperature sampling (stats only, not in the hot loop)
+  private framesSinceSample = 0
+  private temperature = Number.NaN
+  private sampling = false
+
+  constructor(backend: IGPUBackend) {
+    this.backend = backend
+  }
+
+  setCameraProvider(provider: CameraProvider): void {
+    this.cameraProvider = provider
+  }
+
+  setStatsListener(listener: StatsListener): void {
+    this.statsListener = listener
+  }
+
+  async start(
+    params: SimParams,
+    topology: Topology,
+    initial: InitialState,
+    runtime: RuntimeConfig,
+  ): Promise<void> {
+    this.params = params
+    this.runtime = runtime
+    this.neighborList = new NeighborListManager(params)
+    this.thermostat = new ThermostatManager(runtime)
+
+    await this.backend.initialize(params, topology, initial)
+    this.backend.setThermostat(
+      runtime.targetTemperature,
+      runtime.thermostatEnabled,
+    )
+
+    this.temperature = Number.NaN
+    this.framesSinceSample = 0
+    this.running = true
+    this.lastFrameTime = performance.now()
+    this.loop()
+  }
+
+  setRuntime(runtime: RuntimeConfig): void {
+    this.runtime = runtime
+    this.thermostat?.update(runtime)
+    this.backend.setThermostat(
+      runtime.targetTemperature,
+      runtime.thermostatEnabled,
+    )
+  }
+
+  pause(): void {
+    this.running = false
+  }
+
+  resume(): void {
+    if (this.running || !this.params) return
+    this.running = true
+    this.lastFrameTime = performance.now()
+    this.loop()
+  }
+
+  get isRunning(): boolean {
+    return this.running
+  }
+
+  destroy(): void {
+    this.running = false
+    cancelAnimationFrame(this.rafHandle)
+    this.backend.destroy()
+  }
+
+  private loop = (): void => {
+    if (!this.running || !this.runtime) return
+
+    const now = performance.now()
+    const dt = now - this.lastFrameTime
+    this.lastFrameTime = now
+    if (dt > 0) this.fps = 0.9 * this.fps + 0.1 * (1000 / dt)
+
+    // Tick the neighbor-list manager (no-op until a list is enabled).
+    this.neighborList?.shouldRebuild()
+
+    this.backend.stepSimulation(this.runtime.stepsPerFrame)
+
+    if (this.cameraProvider) {
+      this.backend.render(this.cameraProvider())
+    }
+
+    this.maybeSampleTemperature()
+    this.emitStats()
+
+    this.rafHandle = requestAnimationFrame(this.loop)
+  }
+
+  /** Read velocities occasionally for the temperature readout (diagnostics). */
+  private maybeSampleTemperature(): void {
+    if (this.sampling || !this.params) return
+    if (++this.framesSinceSample < 30) return
+    this.framesSinceSample = 0
+    this.sampling = true
+    void this.backend
+      .readbackVelocities()
+      .then((v) => {
+        this.temperature = ThermostatManager.temperatureFrom(v)
+      })
+      .finally(() => {
+        this.sampling = false
+      })
+  }
+
+  private emitStats(): void {
+    if (!this.statsListener || !this.params) return
+    this.statsListener({
+      fps: this.fps,
+      numAtoms: this.params.numAtoms,
+      temperature: this.temperature,
+    })
+  }
+}
