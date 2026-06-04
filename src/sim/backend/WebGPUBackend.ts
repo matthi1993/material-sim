@@ -18,6 +18,8 @@ import integratePosWgsl from '../../shaders/integrate_pos.wgsl?raw'
 import integrateVelWgsl from '../../shaders/integrate_vel.wgsl?raw'
 import thermoReduceWgsl from '../../shaders/thermostat_reduce.wgsl?raw'
 import thermoScaleWgsl from '../../shaders/thermostat_scale.wgsl?raw'
+import cellClearWgsl from '../../shaders/cell_clear.wgsl?raw'
+import cellBuildWgsl from '../../shaders/cell_build.wgsl?raw'
 import renderWgsl from '../../shaders/render.wgsl?raw'
 import bondWgsl from '../../shaders/bond.wgsl?raw'
 import attractionBuildWgsl from '../../shaders/attraction_build.wgsl?raw'
@@ -25,14 +27,29 @@ import attractionWgsl from '../../shaders/attraction.wgsl?raw'
 import { KB } from '../params'
 
 const WORKGROUP_SIZE = 64
-const UNIFORM_BYTES = 64
+const UNIFORM_BYTES = 96
 const CAMERA_BYTES = 96
-const VIZ_BYTES = 32
+const VIZ_BYTES = 48
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
+// Cell list is used only when it pays off: the box must hold at least a 3x3x3
+// grid (so 27-neighbor wrapping never double-counts) and the system must be
+// large enough that O(N) beats the brute-force O(N^2) constant factor.
+const CELL_MIN_GRID = 3
+const CELL_MIN_ATOMS = 1500
+// Skip the (O(N^2)) attraction-visualization pass above this size; it is a
+// diagnostic overlay, not physics, and dominates frame time for big systems.
+const ATTRACTION_MAX_ATOMS = 4000
 // Coulomb attraction magnitude (kJ/mol/nm) above which a pair is drawn as a
 // line. ~450 catches forming hydrogen bonds; weaker ones fade in toward full
 // opacity around ~2.5x this value (see attraction_build.wgsl).
-const ATTRACTION_THRESHOLD = 450
+const ATTRACTION_THRESHOLD = 650
+// Lennard-Jones attractive force magnitude (kJ/mol/nm) above which a pair is
+// drawn. Far smaller than the Coulomb scale; tuned to catch close-contact wells
+// without flooding the view with weak long-range tails.
+const LJ_ATTRACTION_THRESHOLD = 70
+// Bond stretch force magnitude (kJ/mol/nm) above which a bond reaches toward
+// full opacity; relaxed bonds stay faint (floor in bond.wgsl).
+const BOND_THRESHOLD = 150
 
 export class WebGPUBackend implements IGPUBackend {
   private readonly canvas: HTMLCanvasElement
@@ -46,6 +63,16 @@ export class WebGPUBackend implements IGPUBackend {
   private numMol = 0
   private numBonds = 0
   private maxSeg = 0
+  private bondR0 = 0
+  private bondK = 0
+
+  // Cell-list grid (nonbonded neighbor search).
+  private useCells = false
+  private numCells = 1
+  private cellCap = 1
+  private gridDim: [number, number, number] = [1, 1, 1]
+  private cellSize: [number, number, number] = [1, 1, 1]
+  private showAttractions = true
 
   // Buffers
   private uniformBuffer!: GPUBuffer
@@ -59,6 +86,8 @@ export class WebGPUBackend implements IGPUBackend {
   private bondPairsBuffer!: GPUBuffer
   private segCountBuffer!: GPUBuffer
   private segPairsBuffer!: GPUBuffer
+  private cellHeadBuffer!: GPUBuffer
+  private cellAtomsBuffer!: GPUBuffer
 
   // Cached uniform bytes so hot-swappable fields can be patched in place.
   private uniformData!: ArrayBuffer
@@ -76,6 +105,8 @@ export class WebGPUBackend implements IGPUBackend {
     integrateVel: GPUComputePipeline
     thermoReduce: GPUComputePipeline
     thermoScale: GPUComputePipeline
+    cellClear: GPUComputePipeline
+    cellBuild: GPUComputePipeline
   }
 
   // Render
@@ -109,6 +140,8 @@ export class WebGPUBackend implements IGPUBackend {
     this.params = params
     this.numAtoms = params.numAtoms
     this.numMol = params.numMolecules
+    this.computeGrid()
+    this.showAttractions = this.numAtoms <= ATTRACTION_MAX_ATOMS
 
     this.context = this.canvas.getContext('webgpu') as GPUCanvasContext
     this.format = navigator.gpu.getPreferredCanvasFormat()
@@ -129,6 +162,29 @@ export class WebGPUBackend implements IGPUBackend {
 
     // Compute a(t=0) so the first Velocity-Verlet half-kick is valid.
     this.computeForces()
+  }
+
+  /**
+   * Size the cell-list grid from the box and cutoff. Cells are at least one
+   * cutoff wide so a 3x3x3 neighbor stencil captures every interacting pair.
+   * Falls back to brute force for small boxes/systems (useCells = false).
+   */
+  private computeGrid(): void {
+    const p = this.params
+    const cutoff = p.cutoffRadius
+    const gx = Math.max(1, Math.floor(p.box[0] / cutoff))
+    const gy = Math.max(1, Math.floor(p.box[1] / cutoff))
+    const gz = Math.max(1, Math.floor(p.box[2] / cutoff))
+    this.gridDim = [gx, gy, gz]
+    this.cellSize = [p.box[0] / gx, p.box[1] / gy, p.box[2] / gz]
+    this.numCells = gx * gy * gz
+
+    const bigEnough = Math.min(gx, gy, gz) >= CELL_MIN_GRID
+    this.useCells = bigEnough && this.numAtoms >= CELL_MIN_ATOMS
+
+    // Capacity per cell from mean density with headroom for fluctuations.
+    const mean = this.numAtoms / Math.max(1, this.numCells)
+    this.cellCap = Math.min(256, Math.max(32, Math.ceil(mean * 2.5)))
   }
 
   private createBuffers(initial: InitialState): void {
@@ -169,6 +225,14 @@ export class WebGPUBackend implements IGPUBackend {
       size: 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
+    this.cellHeadBuffer = d.createBuffer({
+      size: this.numCells * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.cellAtomsBuffer = d.createBuffer({
+      size: this.numCells * this.cellCap * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
 
     d.queue.writeBuffer(this.posBuffer, 0, initial.positions)
     d.queue.writeBuffer(this.velBuffer, 0, initial.velocities)
@@ -199,6 +263,15 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(52, THERMOSTAT_TAU, true)
     dv.setFloat32(56, KB, true)
     dv.setUint32(60, this.thermoOn, true)
+    // Cell-list grid.
+    dv.setUint32(64, this.gridDim[0], true)
+    dv.setUint32(68, this.gridDim[1], true)
+    dv.setUint32(72, this.gridDim[2], true)
+    dv.setUint32(76, this.cellCap, true)
+    dv.setFloat32(80, this.cellSize[0], true)
+    dv.setFloat32(84, this.cellSize[1], true)
+    dv.setFloat32(88, this.cellSize[2], true)
+    dv.setUint32(92, this.useCells ? 1 : 0, true)
 
     this.uniformData = buf
     this.device.queue.writeBuffer(this.uniformBuffer, 0, buf)
@@ -210,6 +283,9 @@ export class WebGPUBackend implements IGPUBackend {
 
     // One index pair per intramolecular bond.
     this.numBonds = topology.bonds.length
+    const firstBond = topology.bonds[0]
+    this.bondR0 = firstBond ? firstBond.r0 : 0
+    this.bondK = firstBond ? firstBond.k : 0
     const bondPairs = new Uint32Array(Math.max(1, this.numBonds) * 2)
     for (let b = 0; b < this.numBonds; b++) {
       bondPairs[b * 2] = topology.bonds[b].i
@@ -221,14 +297,16 @@ export class WebGPUBackend implements IGPUBackend {
     })
     d.queue.writeBuffer(this.bondPairsBuffer, 0, bondPairs)
 
-    // Dynamic attraction segments rebuilt on the GPU every frame.
-    this.maxSeg = Math.max(1, this.numAtoms * 4)
+    // Dynamic attraction segments rebuilt on the GPU every frame. Each segment
+    // is 4 u32 (atom i, atom j, packed alpha, kind). Sized for several
+    // attractive partners per atom across the force kinds.
+    this.maxSeg = Math.max(1, this.numAtoms * 8)
     this.segCountBuffer = d.createBuffer({
       size: 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
     this.segPairsBuffer = d.createBuffer({
-      size: this.maxSeg * 3 * 4,
+      size: this.maxSeg * 4 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
 
@@ -250,6 +328,10 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(20, ATTRACTION_THRESHOLD, true)
     dv.setUint32(24, p.numAtoms, true)
     dv.setUint32(28, this.maxSeg, true)
+    dv.setFloat32(32, LJ_ATTRACTION_THRESHOLD, true)
+    dv.setFloat32(36, BOND_THRESHOLD, true)
+    dv.setFloat32(40, this.bondR0, true)
+    dv.setFloat32(44, this.bondK, true)
     this.device.queue.writeBuffer(this.vizUniformBuffer, 0, buf)
   }
 
@@ -275,6 +357,8 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     })
 
@@ -287,6 +371,8 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 3, resource: { buffer: this.forceBuffer } },
         { binding: 4, resource: { buffer: this.velBuffer } },
         { binding: 5, resource: { buffer: this.reductionBuffer } },
+        { binding: 6, resource: { buffer: this.cellHeadBuffer } },
+        { binding: 7, resource: { buffer: this.cellAtomsBuffer } },
       ],
     })
 
@@ -311,6 +397,8 @@ export class WebGPUBackend implements IGPUBackend {
       integrateVel: make(integrateVelWgsl),
       thermoReduce: make(thermoReduceWgsl),
       thermoScale: make(thermoScaleWgsl),
+      cellClear: make(cellClearWgsl),
+      cellBuild: make(cellBuildWgsl),
     }
   }
 
@@ -381,12 +469,28 @@ export class WebGPUBackend implements IGPUBackend {
       fragment: {
         module,
         entryPoint: 'fs',
-        targets: [{ format: this.format }],
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            },
+          },
+        ],
       },
-      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      primitive: { topology: 'line-list' },
       depthStencil: {
         format: 'depth24plus',
-        depthWriteEnabled: true,
+        depthWriteEnabled: false,
         depthCompare: 'less',
       },
     })
@@ -485,6 +589,19 @@ export class WebGPUBackend implements IGPUBackend {
     return Math.ceil(this.numMol / WORKGROUP_SIZE)
   }
 
+  private cellGroups(): number {
+    return Math.ceil(this.numCells / WORKGROUP_SIZE)
+  }
+
+  /** Rebuild the cell list (clear counters, then bin atoms). No-op if unused. */
+  private buildCells(pass: GPUComputePassEncoder, ag: number): void {
+    if (!this.useCells) return
+    pass.setPipeline(this.pipelines.cellClear)
+    pass.dispatchWorkgroups(this.cellGroups())
+    pass.setPipeline(this.pipelines.cellBuild)
+    pass.dispatchWorkgroups(ag)
+  }
+
   /** Recompute forces for the current positions (a single force generation). */
   private computeForces(): void {
     const encoder = this.device.createCommandEncoder()
@@ -492,12 +609,16 @@ export class WebGPUBackend implements IGPUBackend {
     pass.setBindGroup(0, this.computeBindGroup)
     const ag = this.atomGroups()
 
+    this.buildCells(pass, ag)
+
     pass.setPipeline(this.pipelines.lj)
     pass.dispatchWorkgroups(ag)
     pass.setPipeline(this.pipelines.coulomb)
     pass.dispatchWorkgroups(ag)
-    pass.setPipeline(this.pipelines.bonded)
-    pass.dispatchWorkgroups(this.molGroups())
+    if (this.numMol > 0) {
+      pass.setPipeline(this.pipelines.bonded)
+      pass.dispatchWorkgroups(this.molGroups())
+    }
 
     pass.end()
     this.device.queue.submit([encoder.finish()])
@@ -516,13 +637,16 @@ export class WebGPUBackend implements IGPUBackend {
       pass.setPipeline(this.pipelines.integratePos)
       pass.dispatchWorkgroups(ag)
 
-      // Recompute a(t+dt).
+      // Rebuild the neighbor grid at the new positions, then a(t+dt).
+      this.buildCells(pass, ag)
       pass.setPipeline(this.pipelines.lj)
       pass.dispatchWorkgroups(ag)
       pass.setPipeline(this.pipelines.coulomb)
       pass.dispatchWorkgroups(ag)
-      pass.setPipeline(this.pipelines.bonded)
-      pass.dispatchWorkgroups(mg)
+      if (this.numMol > 0) {
+        pass.setPipeline(this.pipelines.bonded)
+        pass.dispatchWorkgroups(mg)
+      }
 
       // Second half-kick.
       pass.setPipeline(this.pipelines.integrateVel)
@@ -544,15 +668,19 @@ export class WebGPUBackend implements IGPUBackend {
     this.ensureDepth()
 
     // Reset the attraction counter, then rebuild the segment list on the GPU.
-    this.device.queue.writeBuffer(this.segCountBuffer, 0, new Uint32Array([0]))
+    if (this.showAttractions) {
+      this.device.queue.writeBuffer(this.segCountBuffer, 0, new Uint32Array([0]))
+    }
 
     const encoder = this.device.createCommandEncoder()
 
-    const build = encoder.beginComputePass()
-    build.setPipeline(this.attractionBuildPipeline)
-    build.setBindGroup(0, this.attractionBuildBindGroup)
-    build.dispatchWorkgroups(this.atomGroups())
-    build.end()
+    if (this.showAttractions) {
+      const build = encoder.beginComputePass()
+      build.setPipeline(this.attractionBuildPipeline)
+      build.setBindGroup(0, this.attractionBuildBindGroup)
+      build.dispatchWorkgroups(this.atomGroups())
+      build.end()
+    }
 
     const view = this.context.getCurrentTexture().createView()
     const pass = encoder.beginRenderPass({
@@ -577,17 +705,19 @@ export class WebGPUBackend implements IGPUBackend {
     pass.setBindGroup(0, this.renderBindGroup)
     pass.draw(6, this.numAtoms)
 
-    // Intramolecular bonds (cylinder impostors).
+    // Intramolecular bonds (lines).
     if (this.numBonds > 0) {
       pass.setPipeline(this.bondPipeline)
       pass.setBindGroup(0, this.bondBindGroup)
-      pass.draw(6, this.numBonds)
+      pass.draw(2, this.numBonds)
     }
 
-    // Strong electrostatic attractions (lines).
-    pass.setPipeline(this.attractionPipeline)
-    pass.setBindGroup(0, this.attractionBindGroup)
-    pass.draw(2, this.maxSeg)
+    // Attractive interactions: Coulomb + Lennard-Jones (lines).
+    if (this.showAttractions) {
+      pass.setPipeline(this.attractionPipeline)
+      pass.setBindGroup(0, this.attractionBindGroup)
+      pass.draw(2, this.maxSeg)
+    }
 
     pass.end()
     this.device.queue.submit([encoder.finish()])
@@ -660,6 +790,8 @@ export class WebGPUBackend implements IGPUBackend {
     this.bondPairsBuffer?.destroy()
     this.segCountBuffer?.destroy()
     this.segPairsBuffer?.destroy()
+    this.cellHeadBuffer?.destroy()
+    this.cellAtomsBuffer?.destroy()
     this.device?.destroy()
   }
 }

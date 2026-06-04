@@ -5,7 +5,7 @@ import './ui/components/sim-app'
 import { WebGPUBackend } from './sim/backend/WebGPUBackend'
 import { SimulationEngine } from './sim/SimulationEngine'
 import { Renderer } from './ui/renderer'
-import { buildWaterSystem } from './sim/topology'
+import { buildSystem } from './sim/topology'
 import { DEFAULT_RUNTIME, type SimConfig } from './sim/params'
 import type { SimApp } from './ui/components/sim-app'
 
@@ -35,7 +35,7 @@ async function restart(config: SimConfig): Promise<void> {
       app.stats = s
     })
 
-    const { params, topology, initial } = buildWaterSystem(config)
+    const { params, topology, initial } = buildSystem(config)
     const runtime = {
       ...DEFAULT_RUNTIME,
       ...currentRuntime,

@@ -1,10 +1,22 @@
 // Topology types and loaders.
-// buildWaterSystem turns a data-driven SimConfig into a Topology plus the
-// initial phase-space state. This is system setup (CPU), not physics.
+// buildSystem turns a data-driven SimConfig (a mixture of materials) into a
+// Topology plus the initial phase-space state. This is system setup (CPU), not
+// physics. Water molecules are always laid out first and molecule-major
+// ([O,H,H] per molecule) so the per-molecule bonded kernel works unchanged;
+// every monatomic species (ions, metals, noble gases) is appended after.
 
-import { COULOMB_K, KB, type SimConfig } from './params'
+import {
+  COULOMB_K,
+  ELEMENTS,
+  KB,
+  MATERIALS,
+  type ElementDef,
+  type MaterialDef,
+  type SimConfig,
+} from './params'
 import type {
   Angle,
+  AtomType,
   Bond,
   Dihedral,
   InitialState,
@@ -17,6 +29,59 @@ export interface BuiltSystem {
   params: SimParams
   topology: Topology
   initial: InitialState
+}
+
+// A grid site is occupied either by a whole water molecule or a single atom.
+type Unit =
+  | { kind: 'water' }
+  | { kind: 'mono'; el: ElementDef }
+
+/** Expand a mixture component into the list of grid-site units it contributes. */
+function expandComponent(mat: MaterialDef, count: number): Unit[] {
+  const n = Math.max(0, Math.round(count))
+  const units: Unit[] = []
+  if (mat.kind === 'water') {
+    for (let i = 0; i < n; i++) units.push({ kind: 'water' })
+  } else if (mat.kind === 'ionic') {
+    const [cation, anion] = mat.elements
+    for (let i = 0; i < n; i++) {
+      units.push({ kind: 'mono', el: cation })
+      units.push({ kind: 'mono', el: anion })
+    }
+  } else {
+    const el = mat.elements[0]
+    for (let i = 0; i < n; i++) units.push({ kind: 'mono', el })
+  }
+  return units
+}
+
+/**
+ * Interleave several per-component unit queues into one sequence so distinct
+ * materials end up spatially mixed (e.g. ions dispersed through water) rather
+ * than segregated into blocks. Picks from whichever component is furthest
+ * behind its target fraction at each step.
+ */
+function interleave(queues: Unit[][]): Unit[] {
+  const totals = queues.map((q) => q.length)
+  const placed = new Array(queues.length).fill(0)
+  const total = totals.reduce((a, b) => a + b, 0)
+  const out: Unit[] = []
+  for (let s = 0; s < total; s++) {
+    let best = -1
+    let bestDeficit = -Infinity
+    for (let c = 0; c < queues.length; c++) {
+      if (placed[c] >= totals[c]) continue
+      const deficit = totals[c] === 0 ? -Infinity : placed[c] / totals[c]
+      // Smaller fraction placed => larger deficit; negate to compare.
+      if (-deficit > bestDeficit) {
+        bestDeficit = -deficit
+        best = c
+      }
+    }
+    out.push(queues[best][placed[best]])
+    placed[best]++
+  }
+  return out
 }
 
 // Deterministic small PRNG so runs are reproducible.
@@ -42,21 +107,39 @@ function makeGaussian(rand: () => number): () => number {
   }
 }
 
-/** Build a flexible-water system: numMolecules waters on a cubic lattice. */
-export function buildWaterSystem(config: SimConfig): BuiltSystem {
-  const ff = config.forceField
+/**
+ * Build a mixture system. Water molecules occupy the first atom indices
+ * (molecule-major [O,H,H]); all monatomic species follow. Positions are placed
+ * on a shared cubic site grid with interleaved assignment so mixtures disperse.
+ */
+export function buildSystem(config: SimConfig): BuiltSystem {
   const [bx, by, bz] = config.box
-  const nMol = config.numMolecules
-  const nAtoms = nMol * 3
 
-  const ow = ff.atomTypes[0]
-  const hw = ff.atomTypes[1]
+  // Expand every component into grid-site units, then interleave for mixing.
+  const queues: Unit[][] = []
+  for (const comp of config.components) {
+    const mat = MATERIALS[comp.materialKey]
+    if (!mat) continue
+    const q = expandComponent(mat, comp.count)
+    if (q.length > 0) queues.push(q)
+  }
+  const units = interleave(queues)
 
-  const positions = new Float32Array(nAtoms * 4)
-  const velocities = new Float32Array(nAtoms * 4)
-  const atomParams = new Float32Array(nAtoms * 4)
-  const atomTypeIds = new Int32Array(nAtoms)
-  const moleculeIds = new Int32Array(nAtoms)
+  const nWaterMol = units.filter((u) => u.kind === 'water').length
+  const nMono = units.length - nWaterMol
+  const nAtoms = nWaterMol * 3 + nMono
+
+  if (nAtoms === 0) {
+    // Degenerate empty system: fall back to a single argon atom so buffers are
+    // valid. The UI prevents this in practice.
+    units.push({ kind: 'mono', el: ELEMENTS.Ar })
+  }
+
+  const positions = new Float32Array(Math.max(1, nAtoms) * 4)
+  const velocities = new Float32Array(Math.max(1, nAtoms) * 4)
+  const atomParams = new Float32Array(Math.max(1, nAtoms) * 4)
+  const atomTypeIds = new Int32Array(Math.max(1, nAtoms))
+  const moleculeIds = new Int32Array(Math.max(1, nAtoms))
   const bonds: Bond[] = []
   const angles: Angle[] = []
   const dihedrals: Dihedral[] = []
@@ -64,94 +147,98 @@ export function buildWaterSystem(config: SimConfig): BuiltSystem {
   const rand = mulberry32(0x9e3779b9)
   const gauss = makeGaussian(rand)
 
-  const halfHOH = ff.water.hohAngle / 2
-  const d = ff.water.ohDistance
-
-  // Lattice that fits nMol sites inside the box.
-  const perSide = Math.ceil(Math.cbrt(nMol))
+  // Shared cubic site grid sized to hold every unit.
+  const nSites = units.length
+  const perSide = Math.max(1, Math.ceil(Math.cbrt(nSites)))
   const sx = bx / perSide
   const sy = by / perSide
   const sz = bz / perSide
 
-  let placed = 0
-  for (let gz = 0; gz < perSide && placed < nMol; gz++) {
-    for (let gy = 0; gy < perSide && placed < nMol; gy++) {
-      for (let gx = 0; gx < perSide && placed < nMol; gx++) {
-        const mol = placed
-        const o = mol * 3
-        const h1 = o + 1
-        const h2 = o + 2
+  const ow = ELEMENTS.O
+  const hw = ELEMENTS.H
+  const water = MATERIALS.water.water!
+  const halfHOH = water.hohAngle / 2
+  const dOH = water.ohDistance
 
-        const cx = (gx + 0.5) * sx
-        const cy = (gy + 0.5) * sy
-        const cz = (gz + 0.5) * sz
+  // Water atoms are written first; monatomic atoms are buffered then appended.
+  let waterAtom = 0 // next water atom slot
+  let monoAtom = nWaterMol * 3 // next monatomic atom slot
+  let molCounter = 0 // unique molecule id allocator
 
-        // Random orientation per molecule.
-        const ux = gauss()
-        const uy = gauss()
-        const uz = gauss()
-        const [ax, ay, az] = normalize([ux, uy, uz])
-        // An arbitrary perpendicular axis to build the H-O-H plane.
-        const [px, py, pz] = normalize(perpendicular([ax, ay, az]))
+  const usedElements = new Map<number, ElementDef>()
 
-        // H positions: rotate the bond axis by +/- halfHOH around perp axis.
-        const h1dir = rotateAround([ax, ay, az], [px, py, pz], halfHOH)
-        const h2dir = rotateAround([ax, ay, az], [px, py, pz], -halfHOH)
+  for (let s = 0; s < nSites; s++) {
+    const unit = units[s]
+    const gx = s % perSide
+    const gy = Math.floor(s / perSide) % perSide
+    const gz = Math.floor(s / (perSide * perSide))
+    const cx = (gx + 0.5) * sx
+    const cy = (gy + 0.5) * sy
+    const cz = (gz + 0.5) * sz
 
-        setPos(positions, o, cx, cy, cz, ow.charge)
-        setPos(
-          positions,
-          h1,
-          cx + h1dir[0] * d,
-          cy + h1dir[1] * d,
-          cz + h1dir[2] * d,
-          hw.charge,
-        )
-        setPos(
-          positions,
-          h2,
-          cx + h2dir[0] * d,
-          cy + h2dir[1] * d,
-          cz + h2dir[2] * d,
-          hw.charge,
-        )
+    if (unit.kind === 'water') {
+      const mol = molCounter++
+      const o = waterAtom
+      const h1 = o + 1
+      const h2 = o + 2
+      waterAtom += 3
+      usedElements.set(ow.id, ow)
+      usedElements.set(hw.id, hw)
 
-        // atomParams: (sigma, epsilon, molId, typeId)
-        setVec4(atomParams, o, ow.sigma, ow.epsilon, mol, 0)
-        setVec4(atomParams, h1, hw.sigma, hw.epsilon, mol, 1)
-        setVec4(atomParams, h2, hw.sigma, hw.epsilon, mol, 1)
+      // Random orientation per molecule.
+      const [ax, ay, az] = normalize([gauss(), gauss(), gauss()])
+      const [px, py, pz] = normalize(perpendicular([ax, ay, az]))
+      const h1dir = rotateAround([ax, ay, az], [px, py, pz], halfHOH)
+      const h2dir = rotateAround([ax, ay, az], [px, py, pz], -halfHOH)
 
-        // velocities carry mass in w; xyz filled below.
-        velocities[o * 4 + 3] = ow.mass
-        velocities[h1 * 4 + 3] = hw.mass
-        velocities[h2 * 4 + 3] = hw.mass
+      setPos(positions, o, cx, cy, cz, ow.charge)
+      setPos(positions, h1, cx + h1dir[0] * dOH, cy + h1dir[1] * dOH, cz + h1dir[2] * dOH, hw.charge)
+      setPos(positions, h2, cx + h2dir[0] * dOH, cy + h2dir[1] * dOH, cz + h2dir[2] * dOH, hw.charge)
 
-        atomTypeIds[o] = 0
-        atomTypeIds[h1] = 1
-        atomTypeIds[h2] = 1
-        moleculeIds[o] = mol
-        moleculeIds[h1] = mol
-        moleculeIds[h2] = mol
+      setVec4(atomParams, o, ow.sigma, ow.epsilon, mol, ow.id)
+      setVec4(atomParams, h1, hw.sigma, hw.epsilon, mol, hw.id)
+      setVec4(atomParams, h2, hw.sigma, hw.epsilon, mol, hw.id)
 
-        bonds.push({ i: o, j: h1, r0: ff.water.bondR0, k: ff.water.bondK })
-        bonds.push({ i: o, j: h2, r0: ff.water.bondR0, k: ff.water.bondK })
-        angles.push({
-          i: h1,
-          j: o,
-          k: h2,
-          theta0: ff.water.angleTheta0,
-          kTheta: ff.water.angleK,
-        })
+      velocities[o * 4 + 3] = ow.mass
+      velocities[h1 * 4 + 3] = hw.mass
+      velocities[h2 * 4 + 3] = hw.mass
 
-        placed++
-      }
+      atomTypeIds[o] = ow.id
+      atomTypeIds[h1] = hw.id
+      atomTypeIds[h2] = hw.id
+      moleculeIds[o] = mol
+      moleculeIds[h1] = mol
+      moleculeIds[h2] = mol
+
+      bonds.push({ i: o, j: h1, r0: water.bondR0, k: water.bondK })
+      bonds.push({ i: o, j: h2, r0: water.bondR0, k: water.bondK })
+      angles.push({ i: h1, j: o, k: h2, theta0: water.angleTheta0, kTheta: water.angleK })
+    } else {
+      const el = unit.el
+      const mol = molCounter++
+      const a = monoAtom++
+      usedElements.set(el.id, el)
+
+      setPos(positions, a, cx, cy, cz, el.charge)
+      setVec4(atomParams, a, el.sigma, el.epsilon, mol, el.id)
+      velocities[a * 4 + 3] = el.mass
+      atomTypeIds[a] = el.id
+      moleculeIds[a] = mol
     }
   }
 
   initVelocities(velocities, config.temperature, gauss)
 
+  const atomTypes: AtomType[] = [...usedElements.values()].map((el) => ({
+    name: el.symbol,
+    mass: el.mass,
+    charge: el.charge,
+    sigma: el.sigma,
+    epsilon: el.epsilon,
+  }))
+
   const topology: Topology = {
-    atomTypes: ff.atomTypes,
+    atomTypes,
     atomTypeIds,
     moleculeIds,
     bonds,
@@ -161,8 +248,8 @@ export function buildWaterSystem(config: SimConfig): BuiltSystem {
 
   const params: SimParams = {
     dt: config.dt,
-    numAtoms: nAtoms,
-    numMolecules: nMol,
+    numAtoms: Math.max(1, nAtoms),
+    numMolecules: nWaterMol,
     cutoffRadius: config.cutoffRadius,
     box: [bx, by, bz],
     coulombConstant: COULOMB_K,

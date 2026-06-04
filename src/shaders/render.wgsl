@@ -18,6 +18,22 @@ struct VSOut {
   @location(1)       color : vec3<f32>,
 };
 
+// Palette keyed by the global element id stored in atomParams.w. Must match the
+// ELEMENTS ids in params.ts. Returns rgb in xyz and the draw radius (nm) in w.
+fn elementStyle(id: f32) -> vec4<f32> {
+  let e = i32(id + 0.5);
+  switch (e) {
+    case 0:  { return vec4<f32>(0.91, 0.23, 0.17, 0.020); } // O  oxygen
+    case 1:  { return vec4<f32>(0.93, 0.94, 0.97, 0.011); } // H  hydrogen
+    case 2:  { return vec4<f32>(0.67, 0.40, 0.95, 0.022); } // Na sodium
+    case 3:  { return vec4<f32>(0.36, 0.85, 0.45, 0.030); } // Cl chlorine
+    case 4:  { return vec4<f32>(0.45, 0.92, 0.95, 0.030); } // Ar argon
+    case 5:  { return vec4<f32>(0.80, 0.52, 0.40, 0.022); } // Fe iron
+    case 6:  { return vec4<f32>(0.88, 0.55, 0.30, 0.024); } // Cu copper
+    default: { return vec4<f32>(0.70, 0.72, 0.78, 0.020); }
+  }
+}
+
 @vertex
 fn vs(
   @builtin(vertex_index) vi: u32,
@@ -34,14 +50,9 @@ fn vs(
   let o = offs[vi];
 
   let center = pos[ii].xyz;
-  let typeId = atomParams[ii].w;
-
-  var radius = 0.02;                       // oxygen
-  var color = vec3<f32>(0.91, 0.23, 0.17);
-  if (typeId > 0.5) {                       // hydrogen
-    radius = 0.01;
-    color = vec3<f32>(0.93, 0.94, 0.97);
-  }
+  let style = elementStyle(atomParams[ii].w);
+  let radius = style.w;
+  let color = style.xyz;
 
   let world = center
     + cam.right.xyz * (o.x * radius)

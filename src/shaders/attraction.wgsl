@@ -1,8 +1,9 @@
-// Draws strong electrostatic attractions as line segments. One line-list
-// instance per candidate slot; instances beyond the live count (filled by
-// attraction_build) are pushed off-screen so they are clipped. The second
-// endpoint uses the minimum image of the partner atom so the line stays short
-// when the pair interacts across a periodic boundary.
+// Draws attractive interactions as line segments. One line-list instance per
+// candidate slot; instances beyond the live count (filled by attraction_build)
+// are pushed off-screen so they are clipped. Each segment carries a per-pair
+// opacity and a "kind" used to pick a color (Coulomb vs Lennard-Jones). The
+// second endpoint uses the minimum image of the partner atom so the line stays
+// short when the pair interacts across a periodic boundary.
 
 struct Camera {
   viewProj : mat4x4<f32>,
@@ -11,12 +12,16 @@ struct Camera {
 };
 
 struct Viz {
-  box       : vec3<f32>,
-  coulombK  : f32,
-  cutoff2   : f32,
-  threshold : f32,
-  numAtoms  : u32,
-  maxSeg    : u32,
+  box           : vec3<f32>,
+  coulombK      : f32,
+  cutoff2       : f32,
+  coulombThresh : f32,
+  numAtoms      : u32,
+  maxSeg        : u32,
+  ljThresh      : f32,
+  bondThresh    : f32,
+  bondR0        : f32,
+  bondK         : f32,
 };
 
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -27,6 +32,14 @@ struct Viz {
 
 fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
   return d - box * round(d / box);
+}
+
+fn kindColor(kind: u32) -> vec3<f32> {
+  switch (kind) {
+    case 0u:  { return vec3<f32>(0.35, 0.85, 1.00); } // Coulomb — cyan
+    case 1u:  { return vec3<f32>(0.10, 0.35, 0.20); } // Lennard-Jones — green
+    default:  { return vec3<f32>(0.80, 0.80, 0.80); }
+  }
 }
 
 struct VSOut {
@@ -49,9 +62,10 @@ fn vs(
     return out;
   }
 
-  let ia = segPairs[ii * 3u];
-  let ib = segPairs[ii * 3u + 1u];
-  out.alpha = bitcast<f32>(segPairs[ii * 3u + 2u]);
+  let ia = segPairs[ii * 4u];
+  let ib = segPairs[ii * 4u + 1u];
+  out.alpha = bitcast<f32>(segPairs[ii * 4u + 2u]) * 0.5;
+  out.color = kindColor(segPairs[ii * 4u + 3u]);
   let a = pos[ia].xyz;
   let b = a - minImage(a - pos[ib].xyz, viz.box); // nearest image of partner
 

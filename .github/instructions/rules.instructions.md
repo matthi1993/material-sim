@@ -6,6 +6,11 @@ description: coding rules for app
 
 ## Non-negotiable rules
 
+## File size and structure
+keep files under ~300 lines. If it grows beyond that, split it up.
+seperate by domain (e.g. sim logic vs UI) and layer (e.g. backend vs engine).
+put files in subfolders if it helps keep things organized, but avoid deep nesting.
+
 ### Physics belongs in shaders
 Never write force, velocity, or position math in TypeScript.
 If it touches atoms, it lives in a `.wgsl` file.
