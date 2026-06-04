@@ -19,6 +19,12 @@
   --el-ar: #73ebf2;
   --el-fe: #cc8566;
   --el-cu: #e08c4d;
+  --el-k: #8f40d4;
+  --el-br: #a64230;
+  --el-ne: #b3e3f5;
+  --el-au: #ffd123;
+  --el-ag: #c7ccd6;
+  --el-ni: #75a08c;
 
   --space-xs: 4px;
   --space-sm: 8px;
@@ -30,5 +36,8 @@
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
 
-  --panel-width: 280px;
+  --panel-width: 290px;
+
+  /* Floating overlay surface (stats, legend). */
+  --color-overlay: color-mix(in srgb, var(--color-panel) 82%, transparent);
 }

@@ -22,6 +22,7 @@ struct Viz {
   bondThresh    : f32,
   bondR0        : f32,
   bondK         : f32,
+  lineOpacity   : f32, // master force/bond line opacity (0..1)
 };
 
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -60,7 +61,7 @@ fn vs(
   var out: VSOut;
   out.clip = cam.viewProj * vec4<f32>(world, 1.0);
   out.color = vec3<f32>(0.9, 0.9, 0.9); // bonds — grey
-  out.alpha = alpha;
+  out.alpha = alpha * viz.lineOpacity;
   return out;
 }
 

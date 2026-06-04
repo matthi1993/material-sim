@@ -6,7 +6,8 @@ import { WebGPUBackend } from './sim/backend/WebGPUBackend'
 import { SimulationEngine } from './sim/SimulationEngine'
 import { Renderer } from './ui/renderer'
 import { buildSystem } from './sim/topology'
-import { DEFAULT_RUNTIME, type SimConfig } from './sim/params'
+import { DEFAULT_RUNTIME, DEFAULT_VIEW, type SimConfig } from './sim/params'
+import type { ViewOptions } from './sim/types'
 import type { SimApp } from './ui/components/sim-app'
 
 const app = document.querySelector<SimApp>('sim-app')!
@@ -15,6 +16,7 @@ let engine: SimulationEngine | null = null
 let renderer: Renderer | null = null
 let restarting = false
 let currentRuntime = { ...DEFAULT_RUNTIME }
+let currentView: ViewOptions = { ...DEFAULT_VIEW }
 
 async function restart(config: SimConfig): Promise<void> {
   if (restarting) return
@@ -44,6 +46,7 @@ async function restart(config: SimConfig): Promise<void> {
     currentRuntime = runtime
 
     await engine.start(params, topology, initial, runtime)
+    engine.setViewOptions(currentView)
     app.running = true
   } catch (err) {
     console.error('Simulation failed to start:', err)
@@ -61,6 +64,11 @@ app.addEventListener('runtime-change', (e) => {
   const { stepsPerFrame } = (e as CustomEvent<{ stepsPerFrame: number }>).detail
   currentRuntime = { ...currentRuntime, stepsPerFrame }
   engine?.setRuntime(currentRuntime)
+})
+
+app.addEventListener('view-change', (e) => {
+  currentView = { ...currentView, ...(e as CustomEvent<Partial<ViewOptions>>).detail }
+  engine?.setViewOptions(currentView)
 })
 
 app.addEventListener('toggle-run', () => {

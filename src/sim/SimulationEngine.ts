@@ -12,6 +12,7 @@ import type {
   SimParams,
   SimStats,
   Topology,
+  ViewOptions,
 } from './types'
 
 export type CameraProvider = () => CameraView
@@ -83,6 +84,11 @@ export class SimulationEngine {
       runtime.targetTemperature,
       runtime.thermostatEnabled,
     )
+  }
+
+  /** Apply live display options (atom size, line opacity, overlay toggles). */
+  setViewOptions(options: ViewOptions): void {
+    this.backend.setViewOptions(options)
   }
 
   pause(): void {

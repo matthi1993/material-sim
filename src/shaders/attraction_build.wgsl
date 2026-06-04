@@ -21,6 +21,7 @@ struct Viz {
   bondThresh    : f32,
   bondR0        : f32,
   bondK         : f32,
+  lineOpacity   : f32, // master force/bond line opacity (0..1)
 };
 
 @group(0) @binding(0) var<uniform> viz: Viz;

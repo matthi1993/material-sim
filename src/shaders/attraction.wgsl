@@ -22,6 +22,7 @@ struct Viz {
   bondThresh    : f32,
   bondR0        : f32,
   bondK         : f32,
+  lineOpacity   : f32, // master force/bond line opacity (0..1)
 };
 
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -64,7 +65,7 @@ fn vs(
 
   let ia = segPairs[ii * 4u];
   let ib = segPairs[ii * 4u + 1u];
-  out.alpha = bitcast<f32>(segPairs[ii * 4u + 2u]) * 0.5;
+  out.alpha = bitcast<f32>(segPairs[ii * 4u + 2u]) * viz.lineOpacity;
   out.color = kindColor(segPairs[ii * 4u + 3u]);
   let a = pos[ia].xyz;
   let b = a - minImage(a - pos[ib].xyz, viz.box); // nearest image of partner

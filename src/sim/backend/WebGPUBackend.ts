@@ -8,6 +8,7 @@ import type {
   InitialState,
   SimParams,
   Topology,
+  ViewOptions,
 } from '../types'
 
 import commonWgsl from '../../shaders/_common.wgsl?raw'
@@ -22,6 +23,7 @@ import cellClearWgsl from '../../shaders/cell_clear.wgsl?raw'
 import cellBuildWgsl from '../../shaders/cell_build.wgsl?raw'
 import renderWgsl from '../../shaders/render.wgsl?raw'
 import bondWgsl from '../../shaders/bond.wgsl?raw'
+import boxWgsl from '../../shaders/box.wgsl?raw'
 import attractionBuildWgsl from '../../shaders/attraction_build.wgsl?raw'
 import attractionWgsl from '../../shaders/attraction.wgsl?raw'
 import { KB } from '../params'
@@ -29,7 +31,7 @@ import { KB } from '../params'
 const WORKGROUP_SIZE = 64
 const UNIFORM_BYTES = 96
 const CAMERA_BYTES = 96
-const VIZ_BYTES = 48
+const VIZ_BYTES = 64
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
 // Cell list is used only when it pays off: the box must hold at least a 3x3x3
 // grid (so 27-neighbor wrapping never double-counts) and the system must be
@@ -74,6 +76,13 @@ export class WebGPUBackend implements IGPUBackend {
   private cellSize: [number, number, number] = [1, 1, 1]
   private showAttractions = true
 
+  // Live display options (set via setViewOptions; default to a sensible view).
+  private atomScale = 1
+  private forceOpacity = 1
+  private showForces = true
+  private showBonds = true
+  private showBox = false
+
   // Buffers
   private uniformBuffer!: GPUBuffer
   private cameraBuffer!: GPUBuffer
@@ -114,6 +123,8 @@ export class WebGPUBackend implements IGPUBackend {
   private renderBindGroup!: GPUBindGroup
   private bondPipeline!: GPURenderPipeline
   private bondBindGroup!: GPUBindGroup
+  private boxPipeline!: GPURenderPipeline
+  private boxBindGroup!: GPUBindGroup
   private attractionPipeline!: GPURenderPipeline
   private attractionBindGroup!: GPUBindGroup
   private attractionBuildPipeline!: GPUComputePipeline
@@ -158,6 +169,7 @@ export class WebGPUBackend implements IGPUBackend {
     this.createComputePipelines()
     this.createRenderPipeline()
     this.createBondPipeline()
+    this.createBoxPipeline()
     this.createAttractionPipelines()
 
     // Compute a(t=0) so the first Velocity-Verlet half-kick is valid.
@@ -332,6 +344,7 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(36, BOND_THRESHOLD, true)
     dv.setFloat32(40, this.bondR0, true)
     dv.setFloat32(44, this.bondK, true)
+    dv.setFloat32(48, this.forceOpacity, true)
     this.device.queue.writeBuffer(this.vizUniformBuffer, 0, buf)
   }
 
@@ -344,6 +357,19 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(48, this.thermoTargetT, true)
     dv.setUint32(60, this.thermoOn, true)
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+  }
+
+  /** Live display controls (atom size, line opacity, overlay toggles). */
+  setViewOptions(options: ViewOptions): void {
+    this.atomScale = options.atomScale
+    this.forceOpacity = options.forceOpacity
+    this.showForces = options.showForces
+    this.showBonds = options.showBonds
+    this.showBox = options.showBox
+    // Patch the line opacity in the viz uniform without a full rewrite.
+    const buf = new ArrayBuffer(4)
+    new DataView(buf).setFloat32(0, this.forceOpacity, true)
+    this.device.queue.writeBuffer(this.vizUniformBuffer, 48, buf)
   }
 
   private createComputePipelines(): void {
@@ -464,6 +490,59 @@ export class WebGPUBackend implements IGPUBackend {
     })
 
     this.bondPipeline = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: { module, entryPoint: 'vs' },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            },
+          },
+        ],
+      },
+      primitive: { topology: 'line-list' },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: false,
+        depthCompare: 'less',
+      },
+    })
+  }
+
+  /** Periodic-box wireframe pass. Reuses the camera + viz uniforms. */
+  private createBoxPipeline(): void {
+    const d = this.device
+    const module = d.createShaderModule({ code: boxWgsl })
+
+    const layout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      ],
+    })
+
+    this.boxBindGroup = d.createBindGroup({
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: this.vizUniformBuffer } },
+      ],
+    })
+
+    this.boxPipeline = d.createRenderPipeline({
       layout: d.createPipelineLayout({ bindGroupLayouts: [layout] }),
       vertex: { module, entryPoint: 'vs' },
       fragment: {
@@ -667,14 +746,15 @@ export class WebGPUBackend implements IGPUBackend {
     this.writeCamera(camera)
     this.ensureDepth()
 
-    // Reset the attraction counter, then rebuild the segment list on the GPU.
-    if (this.showAttractions) {
+    // Build the attraction segment list only when the overlay is actually drawn.
+    const drawForces = this.showForces && this.showAttractions
+    if (drawForces) {
       this.device.queue.writeBuffer(this.segCountBuffer, 0, new Uint32Array([0]))
     }
 
     const encoder = this.device.createCommandEncoder()
 
-    if (this.showAttractions) {
+    if (drawForces) {
       const build = encoder.beginComputePass()
       build.setPipeline(this.attractionBuildPipeline)
       build.setBindGroup(0, this.attractionBuildBindGroup)
@@ -705,15 +785,22 @@ export class WebGPUBackend implements IGPUBackend {
     pass.setBindGroup(0, this.renderBindGroup)
     pass.draw(6, this.numAtoms)
 
+    // Periodic-box wireframe (12 edges).
+    if (this.showBox) {
+      pass.setPipeline(this.boxPipeline)
+      pass.setBindGroup(0, this.boxBindGroup)
+      pass.draw(2, 12)
+    }
+
     // Intramolecular bonds (lines).
-    if (this.numBonds > 0) {
+    if (this.numBonds > 0 && this.showBonds) {
       pass.setPipeline(this.bondPipeline)
       pass.setBindGroup(0, this.bondBindGroup)
       pass.draw(2, this.numBonds)
     }
 
     // Attractive interactions: Coulomb + Lennard-Jones (lines).
-    if (this.showAttractions) {
+    if (drawForces) {
       pass.setPipeline(this.attractionPipeline)
       pass.setBindGroup(0, this.attractionBindGroup)
       pass.draw(2, this.maxSeg)
@@ -730,7 +817,7 @@ export class WebGPUBackend implements IGPUBackend {
     f[16] = camera.right[0]
     f[17] = camera.right[1]
     f[18] = camera.right[2]
-    f[19] = 0
+    f[19] = this.atomScale // packed into camera.right.w
     f[20] = camera.up[0]
     f[21] = camera.up[1]
     f[22] = camera.up[2]

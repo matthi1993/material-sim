@@ -24,6 +24,18 @@ export interface RuntimeConfig {
   stepsPerFrame: number
 }
 
+/**
+ * Display-only settings applied live during a run (no restart). Pure rendering
+ * controls — they never affect the physics.
+ */
+export interface ViewOptions {
+  atomScale: number // multiplier on each element's draw radius
+  forceOpacity: number // 0..1 master opacity for force / bond lines
+  showForces: boolean // draw Coulomb + Lennard-Jones attraction lines
+  showBonds: boolean // draw intramolecular bond lines
+  showBox: boolean // draw the periodic simulation-box wireframe
+}
+
 export interface AtomType {
   name: string
   mass: number // amu
