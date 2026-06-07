@@ -24,6 +24,8 @@ export class ControlPanel extends LitElement {
   @property({ type: Number }) stepsPerFrame = DEFAULT_RUNTIME.stepsPerFrame
   @property({ type: Number }) targetTemperature = DEFAULT_RUNTIME.targetTemperature
   @property({ type: Boolean }) thermostatEnabled = DEFAULT_RUNTIME.thermostatEnabled
+  @property({ type: Boolean }) forceGuardEnabled = DEFAULT_RUNTIME.forceGuardEnabled
+  @property({ type: Number }) cutoffRadius = DEFAULT_RUNTIME.cutoffRadius
 
   @state() private showSetup = false
   @state() private presetKey = PRESETS[0].key
@@ -35,7 +37,6 @@ export class ControlPanel extends LitElement {
   @state() private by = SETUP_DEFAULT.box[1]
   @state() private bz = SETUP_DEFAULT.box[2]
   @state() private temp = SETUP_DEFAULT.temperature
-  @state() private cutoff = SETUP_DEFAULT.cutoffRadius
   @state() private dtFs = SETUP_DEFAULT.dt * 1000
 
   firstUpdated(): void {
@@ -84,7 +85,6 @@ export class ControlPanel extends LitElement {
     this.bx = preset.config.box[0]
     this.by = preset.config.box[1]
     this.bz = preset.config.box[2]
-    this.cutoff = preset.config.cutoffRadius
     this.dtFs = preset.config.dt * 1000
     this.temp = preset.config.temperature
   }
@@ -97,7 +97,6 @@ export class ControlPanel extends LitElement {
     this.bx = SETUP_DEFAULT.box[0]
     this.by = SETUP_DEFAULT.box[1]
     this.bz = SETUP_DEFAULT.box[2]
-    this.cutoff = SETUP_DEFAULT.cutoffRadius
     this.dtFs = SETUP_DEFAULT.dt * 1000
     this.temp = SETUP_DEFAULT.temperature
   }
@@ -111,7 +110,6 @@ export class ControlPanel extends LitElement {
     return {
       components,
       box: [this.bx, this.by, this.bz],
-      cutoffRadius: this.cutoff,
       dt: this.dtFs / 1000,
       temperature: this.temp,
     }
@@ -219,7 +217,7 @@ export class ControlPanel extends LitElement {
   private renderMaterialRow(m: MaterialDef): unknown {
     const value = this.amounts[m.key] ?? 0
     return html`
-      <div class="material-row ${m.key === 'polymer-c24' ? 'polymer' : ''}">
+      <div class="material-row ${m.category === 'polymers' ? 'polymer' : ''}">
         <div class="material-meta">
           <strong>${m.label}</strong>
           <span>${m.unit}</span>
@@ -237,6 +235,33 @@ export class ControlPanel extends LitElement {
           <button @click=${() => this.nudgeAmount(m.key, 1)} aria-label="Increase">+</button>
         </div>
       </div>
+    `
+  }
+
+  private renderMaterialList(): unknown {
+    if (this.filteredMaterials.length === 0) {
+      return html`<p class="empty">No matching materials.</p>`
+    }
+
+    const out: unknown[] = []
+    let currentCategory: MaterialCategory | null = null
+    for (const material of this.filteredMaterials) {
+      if (this.filter === 'all' && material.category !== currentCategory) {
+        currentCategory = material.category
+        const sectionLabel = MATERIAL_CATEGORIES.find((c) => c.key === material.category)?.label ?? material.category
+        out.push(html`<p class="category-sep">${sectionLabel}</p>`)
+      }
+      out.push(this.renderMaterialRow(material))
+    }
+    return out
+  }
+
+  private runtimeToggle(label: string, enabled: boolean, patch: Partial<RuntimeConfig>): unknown {
+    return html`
+      <button class="toggle-button ${enabled ? 'on' : ''}" @click=${() => this.setRuntime(patch)}>
+        <span>${label}</span>
+        <span class="toggle-pill" aria-hidden="true"><i></i></span>
+      </button>
     `
   }
 
@@ -279,9 +304,7 @@ export class ControlPanel extends LitElement {
               />
               ${this.renderMaterialFilter()}
               <div class="material-list">
-                ${this.filteredMaterials.length > 0
-                  ? this.filteredMaterials.map((m) => this.renderMaterialRow(m))
-                  : html`<p class="empty">No matching materials.</p>`}
+                ${this.renderMaterialList()}
               </div>
             </section>
 
@@ -294,8 +317,6 @@ export class ControlPanel extends LitElement {
                   @value-change=${(e: CustomEvent<number>) => (this.by = e.detail)}></number-field>
                 <number-field label="Box Z" unit="nm" .value=${this.bz} min="1" max="20" step="0.1"
                   @value-change=${(e: CustomEvent<number>) => (this.bz = e.detail)}></number-field>
-                <number-field label="Cutoff" unit="nm" .value=${this.cutoff} min="0.3" max="2.0" step="0.05"
-                  @value-change=${(e: CustomEvent<number>) => (this.cutoff = e.detail)}></number-field>
                 <number-field label="Initial temperature" unit="K" .value=${this.temp} min="1" max="3000" step="1"
                   @value-change=${(e: CustomEvent<number>) => (this.temp = e.detail)}></number-field>
                 <number-field label="Timestep" unit="fs" .value=${this.dtFs} min="0.05" max="5.0" step="0.05"
@@ -316,7 +337,9 @@ export class ControlPanel extends LitElement {
                 </div>
                 <div>
                   <span>Polymer chains</span>
-                  <b>${this.amounts['polymer-c24'] ?? 0}</b>
+                  <b>${MATERIAL_LIST
+                    .filter((m) => m.category === 'polymers')
+                    .reduce((sum, m) => sum + (this.amounts[m.key] ?? 0), 0)}</b>
                 </div>
               </div>
             </aside>
@@ -351,15 +374,14 @@ export class ControlPanel extends LitElement {
             <button class="pause-btn" @click=${this.toggleRun}>
               ${this.running ? 'Pause' : 'Resume'}
             </button>
-            <label class="toggle-inline">
-              <span>Thermostat</span>
-              <input
-                type="checkbox"
-                .checked=${this.thermostatEnabled}
-                @change=${(e: Event) =>
-                  this.setRuntime({ thermostatEnabled: (e.target as HTMLInputElement).checked })}
-              />
-            </label>
+          </div>
+          <div class="toggle-stack">
+            ${this.runtimeToggle('Thermostat', this.thermostatEnabled, {
+              thermostatEnabled: !this.thermostatEnabled,
+            })}
+            ${this.runtimeToggle('Force Guard', this.forceGuardEnabled, {
+              forceGuardEnabled: !this.forceGuardEnabled,
+            })}
           </div>
           <div class="group">
             ${this.runtimeField(
@@ -370,6 +392,15 @@ export class ControlPanel extends LitElement {
               1,
               'steps/frame',
               (v) => ({ stepsPerFrame: Math.max(1, Math.round(v)) }),
+            )}
+            ${this.runtimeField(
+              'Cutoff',
+              this.cutoffRadius,
+              0.3,
+              2.0,
+              0.05,
+              'nm',
+              (v) => ({ cutoffRadius: v }),
             )}
             ${this.runtimeField(
               'Target temperature',
@@ -521,18 +552,64 @@ export class ControlPanel extends LitElement {
       cursor: pointer;
     }
 
-    .toggle-inline {
+    .toggle-button {
       display: flex;
+      justify-content: space-between;
       align-items: center;
       gap: var(--space-sm);
+      width: 100%;
+      padding: 0.42rem 0.5rem;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--color-panel) 95%, transparent);
       color: var(--color-text-dim);
+      font: inherit;
       font-size: 0.78rem;
+      cursor: pointer;
     }
 
-    .toggle-inline input {
-      width: 16px;
-      height: 16px;
-      accent-color: var(--color-accent);
+    .toggle-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toggle-button.on {
+      border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-panel-border));
+      color: var(--color-text);
+      background: color-mix(in srgb, var(--color-accent-dim) 45%, var(--color-panel));
+    }
+
+    .toggle-pill {
+      width: 2.1rem;
+      height: 1.2rem;
+      border-radius: 999px;
+      background: var(--color-track);
+      border: 1px solid var(--color-panel-border);
+      display: inline-flex;
+      align-items: center;
+      padding: 2px;
+      box-sizing: border-box;
+      transition: background 120ms ease;
+    }
+
+    .toggle-pill i {
+      width: 0.8rem;
+      height: 0.8rem;
+      border-radius: 999px;
+      background: var(--color-text-dim);
+      transform: translateX(0);
+      transition: transform 120ms ease, background 120ms ease;
+    }
+
+    .toggle-button.on .toggle-pill {
+      background: var(--color-accent-dim);
+      border-color: color-mix(in srgb, var(--color-accent) 60%, var(--color-panel-border));
+    }
+
+    .toggle-button.on .toggle-pill i {
+      background: var(--color-accent);
+      transform: translateX(0.84rem);
     }
 
     .boundary-group {
@@ -707,6 +784,14 @@ export class ControlPanel extends LitElement {
       flex-direction: column;
       gap: var(--space-xs);
       padding-right: 0.15rem;
+    }
+
+    .category-sep {
+      margin: 0.35rem 0 0;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--color-text-dim);
     }
 
     .material-row {

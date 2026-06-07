@@ -23,6 +23,7 @@ struct Uniforms {
   cellSize : vec3<f32>, // cell edge lengths (nm), >= cutoff per axis
   useCells : u32,       // 1 = use the cell list, 0 = brute-force O(N^2)
   boundaryMode : u32,   // 0 = periodic, 1 = open, 2 = open-top
+  forceGuardOn : u32,   // 1 = clamp extreme pair/bond force spikes
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -62,4 +63,14 @@ fn cellIndexWrapped(c: vec3<i32>) -> u32 {
   let gd = vec3<i32>(u.gridDim);
   let w = ((c % gd) + gd) % gd;
   return u32(w.x + gd.x * (w.y + gd.y * w.z));
+}
+
+const FORCE_GUARD_MAX: f32 = 25000.0;
+
+fn guardForce(f: vec3<f32>) -> vec3<f32> {
+  if (u.forceGuardOn == 0u) { return f; }
+  let m2 = dot(f, f);
+  if (m2 <= FORCE_GUARD_MAX * FORCE_GUARD_MAX || m2 < 1e-16) { return f; }
+  let invm = inverseSqrt(m2);
+  return f * (FORCE_GUARD_MAX * invm);
 }

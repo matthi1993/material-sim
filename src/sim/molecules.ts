@@ -120,11 +120,20 @@ export const METHANE_MOL: MoleculeTemplate = {
   angles: methaneAngles(),
 }
 
-// --- Coarse-grained polymer chain (C24) -----------------------------------
+// --- Coarse-grained polymer chains -----------------------------------------
 const POLYMER_BOND = 0.154
 const POLYMER_K_BOND = 180000
-const POLYMER_K_ANGLE = 320
-const POLYMER_LENGTH = 24
+const POLYMER_K_ANGLE = 2200
+const POLYMER_K_NEXT2 = 40000
+const POLYMER_K_NEXT3 = 12000
+const POLYMER_THETA0 = 165 * DEG
+
+const POLYETHYLENE_LENGTH = 32
+const PVC_LENGTH = 24
+const PVC_SIDE_R0 = 0.177
+const PVC_SIDE_K = 110000
+const PVC_SIDE_THETA0 = 110 * DEG
+const PVC_SIDE_K_ANGLE = 900
 
 function makeLinearCarbonPolymer(length: number): MoleculeTemplate {
   const sites: MoleculeSite[] = []
@@ -144,15 +153,52 @@ function makeLinearCarbonPolymer(length: number): MoleculeTemplate {
     if (i > 0) {
       bonds.push({ a: i - 1, b: i, r0: POLYMER_BOND, k: POLYMER_K_BOND })
     }
+    // Extra local constraints to keep the chain self-avoiding enough even
+    // when intramolecular LJ/Coulomb are excluded globally by molecule id.
     if (i > 1) {
-      angles.push({ a: i - 2, b: i - 1, c: i, theta0: Math.PI, k: POLYMER_K_ANGLE })
+      bonds.push({ a: i - 2, b: i, r0: 2 * POLYMER_BOND, k: POLYMER_K_NEXT2 })
+    }
+    if (i > 2) {
+      bonds.push({ a: i - 3, b: i, r0: 3 * POLYMER_BOND, k: POLYMER_K_NEXT3 })
+    }
+    if (i > 1) {
+      angles.push({ a: i - 2, b: i - 1, c: i, theta0: POLYMER_THETA0, k: POLYMER_K_ANGLE })
     }
   }
 
   return { sites, bonds, angles }
 }
 
-export const POLYMER_C24_MOL = makeLinearCarbonPolymer(POLYMER_LENGTH)
+function makePVCPolymer(length: number): MoleculeTemplate {
+  const base = makeLinearCarbonPolymer(length)
+  const sites = [...base.sites]
+  const bonds = [...base.bonds]
+  const angles = [...base.angles]
+
+  for (let i = 1; i < length; i += 2) {
+    const x = base.sites[i].pos[0]
+    const sideIndex = sites.length
+    sites.push({
+      el: ELEMENTS.Cl,
+      pos: [x, 0.19, 0],
+      charge: -0.12,
+      sigma: 0.42,
+      epsilon: 0.38,
+    })
+    bonds.push({ a: i, b: sideIndex, r0: PVC_SIDE_R0, k: PVC_SIDE_K })
+    if (i > 0) {
+      angles.push({ a: i - 1, b: i, c: sideIndex, theta0: PVC_SIDE_THETA0, k: PVC_SIDE_K_ANGLE })
+    }
+    if (i < length - 1) {
+      angles.push({ a: i + 1, b: i, c: sideIndex, theta0: PVC_SIDE_THETA0, k: PVC_SIDE_K_ANGLE })
+    }
+  }
+
+  return { sites, bonds, angles }
+}
+
+export const POLYETHYLENE_MOL = makeLinearCarbonPolymer(POLYETHYLENE_LENGTH)
+export const POLYVINYLCHLORIDE_MOL = makePVCPolymer(PVC_LENGTH)
 
 function methaneAngles(): MoleculeAngleT[] {
   const angles: MoleculeAngleT[] = []

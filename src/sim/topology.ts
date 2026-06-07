@@ -122,7 +122,7 @@ function makeGaussian(rand: () => number): () => number {
  * Unit centers are placed on a space-filling jittered grid so the whole box
  * fills randomly while neighbors keep a minimum separation.
  */
-export function buildSystem(config: SimConfig): BuiltSystem {
+export function buildSystem(config: SimConfig, cutoffRadius: number): BuiltSystem {
   const [bx, by, bz] = config.box
 
   // Expand every component into placement units, then interleave for mixing.
@@ -225,6 +225,10 @@ export function buildSystem(config: SimConfig): BuiltSystem {
     }
   }
 
+  // One-time setup relaxation: gently separate overlapping atoms from
+  // different molecules before the first force evaluation.
+  relaxOverlaps(positions, atomParams, moleculeIds, config.box)
+
   initVelocities(velocities, config.temperature, gauss)
 
   const atomTypes: AtomType[] = [...usedElements.values()].map((el) => ({
@@ -249,7 +253,7 @@ export function buildSystem(config: SimConfig): BuiltSystem {
     dt: config.dt,
     numAtoms: nAtoms,
     numMolecules: nBondedMol,
-    cutoffRadius: config.cutoffRadius,
+    cutoffRadius,
     box: [bx, by, bz],
     coulombConstant: COULOMB_K,
   }
@@ -411,4 +415,86 @@ function applyRot(m: number[], v: [number, number, number]): Vec3 {
     m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
     m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
   ]
+}
+
+function relaxOverlaps(
+  positions: Float32Array,
+  atomParams: Float32Array,
+  moleculeIds: Int32Array,
+  box: Vec3,
+): void {
+  const n = moleculeIds.length
+  if (n < 2) return
+
+  let maxMol = 0
+  for (let i = 0; i < n; i++) {
+    if (moleculeIds[i] > maxMol) maxMol = moleculeIds[i]
+  }
+  const nMol = maxMol + 1
+
+  const shifts = new Float32Array(nMol * 3)
+  const hits = new Int32Array(nMol)
+  const iters = n > 3500 ? 2 : 5
+
+  for (let iter = 0; iter < iters; iter++) {
+    shifts.fill(0)
+    hits.fill(0)
+    let overlapPairs = 0
+
+    for (let i = 0; i < n; i++) {
+      const mi = moleculeIds[i]
+      const ix = positions[i * 4 + 0]
+      const iy = positions[i * 4 + 1]
+      const iz = positions[i * 4 + 2]
+      const sigI = atomParams[i * 4 + 0]
+
+      for (let j = i + 1; j < n; j++) {
+        const mj = moleculeIds[j]
+        if (mi === mj) continue
+
+        const sigJ = atomParams[j * 4 + 0]
+        const minSep = Math.max(0.08, 0.55 * (sigI + sigJ))
+
+        let dx = ix - positions[j * 4 + 0]
+        let dy = iy - positions[j * 4 + 1]
+        let dz = iz - positions[j * 4 + 2]
+        dx -= box[0] * Math.round(dx / box[0])
+        dy -= box[1] * Math.round(dy / box[1])
+        dz -= box[2] * Math.round(dz / box[2])
+
+        const r2 = dx * dx + dy * dy + dz * dz
+        if (r2 >= minSep * minSep) continue
+
+        overlapPairs++
+        const r = Math.sqrt(Math.max(r2, 1e-12))
+        const inv = 1 / r
+        const push = (minSep - r) * 0.5 * 0.7
+
+        const sx = dx * inv * push
+        const sy = dy * inv * push
+        const sz = dz * inv * push
+
+        shifts[mi * 3 + 0] += sx
+        shifts[mi * 3 + 1] += sy
+        shifts[mi * 3 + 2] += sz
+        hits[mi]++
+
+        shifts[mj * 3 + 0] -= sx
+        shifts[mj * 3 + 1] -= sy
+        shifts[mj * 3 + 2] -= sz
+        hits[mj]++
+      }
+    }
+
+    if (overlapPairs === 0) break
+
+    for (let i = 0; i < n; i++) {
+      const m = moleculeIds[i]
+      const h = hits[m]
+      if (h === 0) continue
+      positions[i * 4 + 0] = wrap(positions[i * 4 + 0] + shifts[m * 3 + 0] / h, box[0])
+      positions[i * 4 + 1] = wrap(positions[i * 4 + 1] + shifts[m * 3 + 1] / h, box[1])
+      positions[i * 4 + 2] = wrap(positions[i * 4 + 2] + shifts[m * 3 + 2] / h, box[2])
+    }
+  }
 }

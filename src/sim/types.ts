@@ -23,6 +23,8 @@ export interface SimParams {
 export interface RuntimeConfig {
   targetTemperature: number // K
   thermostatEnabled: boolean
+  forceGuardEnabled: boolean
+  cutoffRadius: number // nm
   stepsPerFrame: number
   boundaryMode: BoundaryMode
 }

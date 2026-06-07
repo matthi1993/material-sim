@@ -23,6 +23,8 @@ app.stepsPerFrame = currentRuntime.stepsPerFrame
 app.boundaryMode = currentRuntime.boundaryMode
 app.targetTemperature = currentRuntime.targetTemperature
 app.thermostatEnabled = currentRuntime.thermostatEnabled
+app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+app.cutoffRadius = currentRuntime.cutoffRadius
 
 // Let the orientation gizmo read the live camera frame each frame.
 app.basisProvider = () => renderer?.getBasis() ?? null
@@ -47,7 +49,7 @@ async function restart(config: SimConfig): Promise<void> {
       app.stats = s
     })
 
-    const { params, topology, initial } = buildSystem(config)
+    const { params, topology, initial } = buildSystem(config, currentRuntime.cutoffRadius)
     const runtime = {
       ...DEFAULT_RUNTIME,
       ...currentRuntime,
@@ -58,6 +60,8 @@ async function restart(config: SimConfig): Promise<void> {
     app.boundaryMode = currentRuntime.boundaryMode
     app.targetTemperature = currentRuntime.targetTemperature
     app.thermostatEnabled = currentRuntime.thermostatEnabled
+    app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+    app.cutoffRadius = currentRuntime.cutoffRadius
 
     await engine.start(params, topology, initial, runtime)
     engine.setViewOptions(currentView)
@@ -81,6 +85,8 @@ app.addEventListener('runtime-change', (e) => {
   app.boundaryMode = currentRuntime.boundaryMode
   app.targetTemperature = currentRuntime.targetTemperature
   app.thermostatEnabled = currentRuntime.thermostatEnabled
+  app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+  app.cutoffRadius = currentRuntime.cutoffRadius
   engine?.setRuntime(currentRuntime)
 })
 

@@ -26,6 +26,12 @@ export interface IGPUBackend {
   /** Hot-swappable thermostat control (target temperature, on/off). */
   setThermostat(targetTemperature: number, enabled: boolean): void
 
+  /** Hot-swappable force guard to cap extreme impulse spikes. */
+  setForceGuard(enabled: boolean): void
+
+  /** Hot-swappable nonbonded cutoff radius (nm). */
+  setCutoffRadius(cutoffRadius: number): void
+
   /** Hot-swappable boundary handling for wrapping vs open space. */
   setBoundaryMode(mode: RuntimeConfig['boundaryMode']): void
 

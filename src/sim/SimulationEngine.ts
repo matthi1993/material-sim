@@ -71,6 +71,8 @@ export class SimulationEngine {
       runtime.targetTemperature,
       runtime.thermostatEnabled,
     )
+    this.backend.setForceGuard(runtime.forceGuardEnabled)
+    this.backend.setCutoffRadius(runtime.cutoffRadius)
     this.backend.setBoundaryMode(runtime.boundaryMode)
 
     this.temperature = Number.NaN
@@ -89,6 +91,8 @@ export class SimulationEngine {
       runtime.targetTemperature,
       runtime.thermostatEnabled,
     )
+    this.backend.setForceGuard(runtime.forceGuardEnabled)
+    this.backend.setCutoffRadius(runtime.cutoffRadius)
     this.backend.setBoundaryMode(runtime.boundaryMode)
   }
 

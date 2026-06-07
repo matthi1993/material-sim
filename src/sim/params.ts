@@ -10,7 +10,8 @@ import {
   METHANE_MOL,
   NITROGEN_MOL,
   OXYGEN_MOL,
-  POLYMER_C24_MOL,
+  POLYETHYLENE_MOL,
+  POLYVINYLCHLORIDE_MOL,
   WATER_MOL,
   type MoleculeTemplate,
 } from './molecules'
@@ -26,7 +27,7 @@ export const COULOMB_K = 138.935458 // 1/(4*pi*eps0), kJ*nm/(mol*e^2)
 const RMIN = Math.pow(2, 1 / 6) // r_min / sigma for a Lennard-Jones well
 
 /** Coarse grouping the UI shows as labeled sections in the mixture list. */
-export type MaterialCategory = 'molecules' | 'ions' | 'atoms'
+export type MaterialCategory = 'molecules' | 'polymers' | 'ions' | 'atoms'
 
 /**
  * A buildable substance.
@@ -119,14 +120,26 @@ export const METHANE: MaterialDef = {
   unit: 'molecules',
 }
 
-export const POLYMER: MaterialDef = {
-  key: 'polymer-c24',
-  label: 'Polymer chain (C24)',
+export const POLYETHYLENE: MaterialDef = {
+  key: 'polyethylene',
+  label: 'Polyethylene (PE)',
   kind: 'molecule',
-  category: 'molecules',
+  category: 'polymers',
   elements: [ELEMENTS.C],
-  molecule: POLYMER_C24_MOL,
-  nn: 0.65,
+  molecule: POLYETHYLENE_MOL,
+  // Long chain: larger center spacing avoids heavy startup overlap.
+  nn: 4.2,
+  unit: 'chains',
+}
+
+export const POLYVINYLCHLORIDE: MaterialDef = {
+  key: 'polyvinylchloride',
+  label: 'Polyvinyl chloride (PVC)',
+  kind: 'molecule',
+  category: 'polymers',
+  elements: [ELEMENTS.C, ELEMENTS.Cl],
+  molecule: POLYVINYLCHLORIDE_MOL,
+  nn: 4.4,
   unit: 'chains',
 }
 
@@ -192,7 +205,8 @@ export const MATERIALS: Record<string, MaterialDef> = {
   nitrogen: NITROGEN,
   co2: CARBON_DIOXIDE,
   methane: METHANE,
-  'polymer-c24': POLYMER,
+  polyethylene: POLYETHYLENE,
+  polyvinylchloride: POLYVINYLCHLORIDE,
   salt: SALT,
   kcl: POTASSIUM_CHLORIDE,
   kbr: POTASSIUM_BROMIDE,
@@ -212,7 +226,8 @@ export const MATERIAL_LIST: MaterialDef[] = [
   NITROGEN,
   CARBON_DIOXIDE,
   METHANE,
-  POLYMER,
+  POLYETHYLENE,
+  POLYVINYLCHLORIDE,
   SALT,
   POTASSIUM_CHLORIDE,
   POTASSIUM_BROMIDE,
@@ -228,6 +243,7 @@ export const MATERIAL_LIST: MaterialDef[] = [
 /** Mixture-list section order and labels for the UI. */
 export const MATERIAL_CATEGORIES: { key: MaterialCategory; label: string }[] = [
   { key: 'molecules', label: 'Molecules' },
+  { key: 'polymers', label: 'Polymers' },
   { key: 'ions', label: 'Ions' },
   { key: 'atoms', label: 'Atoms & metals' },
 ]
@@ -242,7 +258,6 @@ export interface MixtureComponent {
 export interface SimConfig {
   components: MixtureComponent[]
   box: Vec3 // nm
-  cutoffRadius: number // nm
   dt: number // ps
   temperature: number // K
 }
@@ -261,7 +276,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'water', count: 267 }],
       box: [2.0, 2.0, 2.0],
-      cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 298,
     },
@@ -275,7 +289,6 @@ export const PRESETS: Preset[] = [
         { materialKey: 'salt', count: 12 },
       ],
       box: [2.0, 2.0, 2.0],
-      cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 310,
     },
@@ -289,7 +302,6 @@ export const PRESETS: Preset[] = [
         { materialKey: 'salt', count: 28 },
       ],
       box: [2.0, 2.0, 2.0],
-      cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 320,
     },
@@ -303,7 +315,6 @@ export const PRESETS: Preset[] = [
         { materialKey: 'kcl', count: 14 },
       ],
       box: [2.0, 2.0, 2.0],
-      cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 310,
     },
@@ -314,7 +325,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'oxygen', count: 160 }],
       box: [4.0, 4.0, 4.0],
-      cutoffRadius: 1.0,
       dt: 0.0005,
       temperature: 200,
     },
@@ -325,7 +335,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'hydrogen', count: 200 }],
       box: [4.0, 4.0, 4.0],
-      cutoffRadius: 1.0,
       dt: 0.0004,
       temperature: 120,
     },
@@ -339,7 +348,6 @@ export const PRESETS: Preset[] = [
         { materialKey: 'oxygen', count: 40 },
       ],
       box: [4.5, 4.5, 4.5],
-      cutoffRadius: 1.0,
       dt: 0.0005,
       temperature: 220,
     },
@@ -350,7 +358,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'co2', count: 130 }],
       box: [4.0, 4.0, 4.0],
-      cutoffRadius: 1.1,
       dt: 0.0005,
       temperature: 250,
     },
@@ -361,20 +368,28 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'methane', count: 130 }],
       box: [4.0, 4.0, 4.0],
-      cutoffRadius: 1.1,
       dt: 0.0004,
       temperature: 150,
     },
   },
   {
-    key: 'polymer-melt',
-    label: 'Polymer melt',
+    key: 'polyethylene-melt',
+    label: 'Polyethylene melt',
     config: {
-      components: [{ materialKey: 'polymer-c24', count: 44 }],
-      box: [5.0, 5.0, 5.0],
-      cutoffRadius: 1.1,
-      dt: 0.0004,
-      temperature: 420,
+      components: [{ materialKey: 'polyethylene', count: 8 }],
+      box: [8.2, 8.2, 8.2],
+      dt: 0.0002,
+      temperature: 260,
+    },
+  },
+  {
+    key: 'pvc-melt',
+    label: 'PVC melt',
+    config: {
+      components: [{ materialKey: 'polyvinylchloride', count: 7 }],
+      box: [8.0, 8.0, 8.0],
+      dt: 0.0002,
+      temperature: 295,
     },
   },
   {
@@ -383,7 +398,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'salt', count: 256 }],
       box: [2.4, 2.4, 2.4],
-      cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 300,
     },
@@ -394,7 +408,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'argon', count: 800 }],
       box: [6.0, 6.0, 6.0],
-      cutoffRadius: 1.2,
       dt: 0.002,
       temperature: 120,
     },
@@ -405,7 +418,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'neon', count: 800 }],
       box: [5.0, 5.0, 5.0],
-      cutoffRadius: 1.0,
       dt: 0.002,
       temperature: 50,
     },
@@ -419,7 +431,6 @@ export const PRESETS: Preset[] = [
         { materialKey: 'neon', count: 400 },
       ],
       box: [6.0, 6.0, 6.0],
-      cutoffRadius: 1.2,
       dt: 0.002,
       temperature: 90,
     },
@@ -430,7 +441,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'iron', count: 729 }],
       box: [2.3, 2.3, 2.3],
-      cutoffRadius: 0.6,
       dt: 0.0002,
       temperature: 300,
     },
@@ -441,7 +451,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'copper', count: 729 }],
       box: [2.34, 2.34, 2.34],
-      cutoffRadius: 0.6,
       dt: 0.0002,
       temperature: 300,
     },
@@ -452,7 +461,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'gold', count: 729 }],
       box: [2.63, 2.63, 2.63],
-      cutoffRadius: 0.6,
       dt: 0.0002,
       temperature: 300,
     },
@@ -463,7 +471,6 @@ export const PRESETS: Preset[] = [
     config: {
       components: [{ materialKey: 'silver', count: 729 }],
       box: [2.64, 2.64, 2.64],
-      cutoffRadius: 0.6,
       dt: 0.0002,
       temperature: 300,
     },
@@ -475,6 +482,8 @@ export const DEFAULT_CONFIG: SimConfig = PRESETS[0].config
 export const DEFAULT_RUNTIME: RuntimeConfig = {
   targetTemperature: 300,
   thermostatEnabled: true,
+  forceGuardEnabled: true,
+  cutoffRadius: 0.9,
   stepsPerFrame: 8,
   boundaryMode: 'periodic',
 }

@@ -24,7 +24,7 @@ fn ljPair(pi: vec3<f32>, sigI: f32, epsI: f32, molI: f32, j: u32) -> vec3<f32> {
   let inv12 = inv6 * inv6;
   // F/r = 24*eps*(2*inv12 - inv6)/r2 ; multiply by d for the vector.
   let fmag = 24.0 * eps * (2.0 * inv12 - inv6) / r2;
-  return fmag * d;
+  return guardForce(fmag * d);
 }
 
 @compute @workgroup_size(64)

@@ -43,9 +43,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let d = minImage(pos[j].xyz - pos[i].xyz); // i -> j
     let r = length(d);
+    if (r < 1e-6) { continue; }
     let inv = 1.0 / r;
     let fb = -kb * (r - r0); // F = -dV/dr
-    let fv = (fb * inv) * d;
+    let fv = guardForce((fb * inv) * d);
     force[j] = force[j] + vec4<f32>(fv, 0.0);
     force[i] = force[i] - vec4<f32>(fv, 0.0);
   }
@@ -64,15 +65,33 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let b = minImage(pos[kk].xyz - pos[jc].xyz); // center -> k
     let ra = length(a);
     let rb = length(b);
+    if (ra < 1e-6 || rb < 1e-6) { continue; }
     let inva = 1.0 / ra;
     let invb = 1.0 / rb;
     let c = clamp(dot(a, b) * inva * invb, -0.9999, 0.9999);
-    let theta = acos(c);
-    let s = sqrt(1.0 - c * c);
-    let dV = ka * (theta - theta0); // dV/dtheta
-    let coef = dV / s;
-    let gi = coef * (b * (inva * invb) - c * a * (inva * inva));
-    let gk = coef * (a * (inva * invb) - c * b * (invb * invb));
+    let baseI = (b * (inva * invb) - c * a * (inva * inva));
+    let baseK = (a * (inva * invb) - c * b * (invb * invb));
+
+    // Avoid the 1/sin(theta) singularity for near-linear equilibrium angles by
+    // switching to a cosine-harmonic form that stays finite at theta ~= pi.
+    let c0 = cos(theta0);
+    let nearLinear = abs(c0 + 1.0) < 0.02;
+
+    var gi = vec3<f32>(0.0);
+    var gk = vec3<f32>(0.0);
+    if (nearLinear) {
+      let dVdc = ka * (c - c0); // V = 0.5*k*(cos(theta)-cos(theta0))^2
+      gi = guardForce(dVdc * baseI);
+      gk = guardForce(dVdc * baseK);
+    } else {
+      let theta = acos(c);
+      let s = sqrt(max(1.0 - c * c, 1e-8));
+      let dV = ka * (theta - theta0); // dV/dtheta
+      let coef = dV / s;
+      gi = guardForce(coef * baseI);
+      gk = guardForce(coef * baseK);
+    }
+
     force[i] = force[i] + vec4<f32>(gi, 0.0);
     force[kk] = force[kk] + vec4<f32>(gk, 0.0);
     force[jc] = force[jc] - vec4<f32>(gi + gk, 0.0);

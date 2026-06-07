@@ -18,7 +18,7 @@ fn coulombPair(pi: vec3<f32>, qi: f32, molI: f32, j: u32) -> vec3<f32> {
   let invr = inverseSqrt(r2);
   // F = k*qi*qj/r^2 * (d/r) = k*qi*qj * d * invr^3
   let fmag = u.coulombK * qi * qj * invr * invr * invr;
-  return fmag * d;
+  return guardForce(fmag * d);
 }
 
 @compute @workgroup_size(64)

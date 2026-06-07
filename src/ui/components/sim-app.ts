@@ -22,6 +22,8 @@ export class SimApp extends LitElement {
   @property() boundaryMode: BoundaryMode = DEFAULT_RUNTIME.boundaryMode
   @property({ type: Number }) targetTemperature = DEFAULT_RUNTIME.targetTemperature
   @property({ type: Boolean }) thermostatEnabled = DEFAULT_RUNTIME.thermostatEnabled
+  @property({ type: Boolean }) forceGuardEnabled = DEFAULT_RUNTIME.forceGuardEnabled
+  @property({ type: Number }) cutoffRadius = DEFAULT_RUNTIME.cutoffRadius
 
   /** Live camera frame source for the orientation gizmo (set by main.ts). */
   @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
@@ -72,6 +74,8 @@ export class SimApp extends LitElement {
         .stepsPerFrame=${this.stepsPerFrame}
         .targetTemperature=${this.targetTemperature}
         .thermostatEnabled=${this.thermostatEnabled}
+        .forceGuardEnabled=${this.forceGuardEnabled}
+        .cutoffRadius=${this.cutoffRadius}
       ></control-panel>
       <div class="right-stack">
         <stats-overlay

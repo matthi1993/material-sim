@@ -76,6 +76,8 @@ export class WebGPUBackend implements IGPUBackend {
   private useCells = false
   private numCells = 1
   private cellCap = 1
+  private allocatedCellCount = 1
+  private allocatedCellCap = 1
   private gridDim: [number, number, number] = [1, 1, 1]
   private cellSize: [number, number, number] = [1, 1, 1]
   private showAttractions = true
@@ -113,6 +115,7 @@ export class WebGPUBackend implements IGPUBackend {
   private uniformData!: ArrayBuffer
   private thermoTargetT = 300
   private thermoOn = 0
+  private forceGuardOn = 1
   private boundaryMode: BoundaryMode = 'periodic'
 
   // Compute
@@ -181,6 +184,7 @@ export class WebGPUBackend implements IGPUBackend {
     this.atomParamsData = new Float32Array(initial.atomParams)
     this.thermoTargetT = runtime.targetTemperature
     this.thermoOn = runtime.thermostatEnabled ? 1 : 0
+    this.forceGuardOn = runtime.forceGuardEnabled ? 1 : 0
     this.boundaryMode = runtime.boundaryMode
     this.computeGrid()
     this.showAttractions = this.numAtoms <= ATTRACTION_MAX_ATOMS
@@ -277,6 +281,8 @@ export class WebGPUBackend implements IGPUBackend {
       size: this.numCells * this.cellCap * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
+    this.allocatedCellCount = this.numCells
+    this.allocatedCellCap = this.cellCap
 
     d.queue.writeBuffer(this.posBuffer, 0, initial.positions)
     d.queue.writeBuffer(this.velBuffer, 0, initial.velocities)
@@ -317,6 +323,7 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(88, this.cellSize[2], true)
     dv.setUint32(92, this.useCells ? 1 : 0, true)
     dv.setUint32(96, this.boundaryModeCode(), true)
+    dv.setUint32(100, this.forceGuardOn, true)
 
     this.uniformData = buf
     this.device.queue.writeBuffer(this.uniformBuffer, 0, buf)
@@ -439,11 +446,60 @@ export class WebGPUBackend implements IGPUBackend {
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
   }
 
+  setForceGuard(enabled: boolean): void {
+    this.forceGuardOn = enabled ? 1 : 0
+    if (!this.uniformData) return
+    const dv = new DataView(this.uniformData)
+    dv.setUint32(100, this.forceGuardOn, true)
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+  }
+
+  setCutoffRadius(cutoffRadius: number): void {
+    const clamped = Math.max(0.05, cutoffRadius)
+    if (!this.params || this.params.cutoffRadius === clamped) return
+    this.params.cutoffRadius = clamped
+    this.computeGrid()
+    this.enforceCellBufferCapacity()
+
+    if (this.uniformData) {
+      const dv = new DataView(this.uniformData)
+      dv.setFloat32(12, clamped * clamped, true)
+      dv.setUint32(64, this.gridDim[0], true)
+      dv.setUint32(68, this.gridDim[1], true)
+      dv.setUint32(72, this.gridDim[2], true)
+      dv.setUint32(76, this.cellCap, true)
+      dv.setFloat32(80, this.cellSize[0], true)
+      dv.setFloat32(84, this.cellSize[1], true)
+      dv.setFloat32(88, this.cellSize[2], true)
+      dv.setUint32(92, this.useCells ? 1 : 0, true)
+      this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+    }
+
+    if (this.vizUniformBuffer) {
+      const buf = new ArrayBuffer(4)
+      new DataView(buf).setFloat32(0, clamped * clamped, true)
+      this.device.queue.writeBuffer(this.vizUniformBuffer, 16, buf)
+    }
+
+    if (!this.boundaryCleanupPending) this.computeForces()
+  }
+
+  private enforceCellBufferCapacity(): void {
+    if (
+      this.numCells > this.allocatedCellCount ||
+      this.cellCap > this.allocatedCellCap
+    ) {
+      // Keep runtime-cutoff updates safe without reallocating GPU buffers.
+      this.useCells = false
+    }
+  }
+
   setBoundaryMode(mode: BoundaryMode): void {
     if (this.boundaryMode === mode) return
     const previousMode = this.boundaryMode
     this.boundaryMode = mode
     this.computeGrid()
+    this.enforceCellBufferCapacity()
     if (this.uniformData) {
       const dv = new DataView(this.uniformData)
       dv.setUint32(92, this.useCells ? 1 : 0, true)
