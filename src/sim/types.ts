@@ -39,6 +39,10 @@ export interface ViewOptions {
   showForces: boolean // draw Coulomb + Lennard-Jones attraction lines
   showBonds: boolean // draw intramolecular bond lines
   showBox: boolean // draw the periodic simulation-box wireframe
+  periodicTilesX: number // render-only replication count along X for periodic boundary
+  periodicTilesY: number // render-only replication count along Y for periodic boundary
+  periodicTilesZ: number // render-only replication count along Z for periodic boundary
+  periodicTiles?: number // legacy single-axis tiling (migrated to XYZ on read)
 }
 
 export interface AtomType {

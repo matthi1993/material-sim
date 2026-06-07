@@ -45,6 +45,12 @@ export class ViewControls extends LitElement {
           @value-change=${(e: CustomEvent<number>) => this.setView({ atomScale: e.detail })}></number-field>
         <number-field label="Force line opacity" .value=${v.forceOpacity} min="0" max="1" step="0.05"
           @value-change=${(e: CustomEvent<number>) => this.setView({ forceOpacity: e.detail })}></number-field>
+        <number-field label="Periodic tiles X" .value=${v.periodicTilesX} min="1" max="6" step="1"
+          @value-change=${(e: CustomEvent<number>) => this.setView({ periodicTilesX: Math.max(1, Math.round(e.detail)) })}></number-field>
+        <number-field label="Periodic tiles Y" .value=${v.periodicTilesY} min="1" max="6" step="1"
+          @value-change=${(e: CustomEvent<number>) => this.setView({ periodicTilesY: Math.max(1, Math.round(e.detail)) })}></number-field>
+        <number-field label="Periodic tiles Z" .value=${v.periodicTilesZ} min="1" max="6" step="1"
+          @value-change=${(e: CustomEvent<number>) => this.setView({ periodicTilesZ: Math.max(1, Math.round(e.detail)) })}></number-field>
         ${this.toggle('Show force lines', v.showForces, (b) => this.setView({ showForces: b }))}
         ${this.toggle('Show bonds', v.showBonds, (b) => this.setView({ showBonds: b }))}
         ${this.toggle('Show box', v.showBox, (b) => this.setView({ showBox: b }))}

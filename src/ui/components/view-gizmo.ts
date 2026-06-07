@@ -25,7 +25,7 @@ export class ViewGizmo extends LitElement {
   /** Supplies the live camera frame; set by main.ts to read the renderer. */
   @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
 
-  @state() private projection: ProjectionMode = 'orthographic'
+  @state() private projection: ProjectionMode = 'perspective'
 
   @query('canvas') private canvasEl!: HTMLCanvasElement
 

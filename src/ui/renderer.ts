@@ -22,7 +22,7 @@ export class Renderer {
   private distance = 5
   private azimuth = 0.6
   private elevation = 0.4
-  private projection: ProjectionMode = 'orthographic'
+  private projection: ProjectionMode = 'perspective'
 
   private dragging = false
   private lastX = 0
@@ -128,8 +128,19 @@ export class Renderer {
       const dy = e.clientY - this.lastY
       this.lastX = e.clientX
       this.lastY = e.clientY
-      this.azimuth += dx * 0.01
-      this.elevation = clamp(this.elevation + dy * 0.01, -1.5, 1.5)
+      if (e.shiftKey) {
+        const eye = this.computeEye()
+        const basis = lookAt(eye, this.target, [0, 1, 0])
+        const panScale = this.distance * 0.0018
+        this.target = [
+          this.target[0] - basis.right[0] * dx * panScale + basis.up[0] * dy * panScale,
+          this.target[1] - basis.right[1] * dx * panScale + basis.up[1] * dy * panScale,
+          this.target[2] - basis.right[2] * dx * panScale + basis.up[2] * dy * panScale,
+        ]
+      } else {
+        this.azimuth += dx * 0.01
+        this.elevation = clamp(this.elevation + dy * 0.01, -1.5, 1.5)
+      }
     })
     this.canvas.addEventListener(
       'wheel',

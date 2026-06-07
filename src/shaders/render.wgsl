@@ -6,6 +6,8 @@ struct Camera {
   viewProj : mat4x4<f32>,
   right    : vec4<f32>, // camera right in world space (xyz), atom-size scale (w)
   up       : vec4<f32>, // camera up in world space (xyz)
+  tileGrid : vec4<f32>, // xyz = tile counts
+  boxSize  : vec4<f32>, // xyz = box side lengths
 };
 
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -59,7 +61,15 @@ fn vs(
   );
   let o = offs[vi];
 
-  if (vel[ii].w <= 0.0) {
+  let tileX = max(1u, u32(cam.tileGrid.x + 0.5));
+  let tileY = max(1u, u32(cam.tileGrid.y + 0.5));
+  let tileZ = max(1u, u32(cam.tileGrid.z + 0.5));
+  let tileCount = tileX * tileY * tileZ;
+  let atomsPerTile = arrayLength(&pos);
+  let atomIndex = ii % atomsPerTile;
+  let tileIndex = ii / atomsPerTile;
+
+  if (tileIndex >= tileCount || vel[atomIndex].w <= 0.0) {
     var dead: VSOut;
     dead.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     dead.uv = vec2<f32>(0.0);
@@ -67,8 +77,16 @@ fn vs(
     return dead;
   }
 
-  let center = pos[ii].xyz;
-  let style = elementStyle(atomParams[ii].w);
+  let tx = tileIndex % tileX;
+  let ty = (tileIndex / tileX) % tileY;
+  let tz = tileIndex / (tileX * tileY);
+  let offset = vec3<f32>(
+    (f32(tx) - 0.5 * f32(tileX - 1u)) * cam.boxSize.x,
+    (f32(ty) - 0.5 * f32(tileY - 1u)) * cam.boxSize.y,
+    (f32(tz) - 0.5 * f32(tileZ - 1u)) * cam.boxSize.z,
+  );
+  let center = pos[atomIndex].xyz + offset;
+  let style = elementStyle(atomParams[atomIndex].w);
   let radius = style.w * max(cam.right.w, 0.0001);
   let color = style.xyz;
 

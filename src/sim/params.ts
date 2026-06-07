@@ -207,4 +207,7 @@ export const DEFAULT_VIEW: ViewOptions = {
   showForces: true,
   showBonds: true,
   showBox: true,
+  periodicTilesX: 1,
+  periodicTilesY: 1,
+  periodicTilesZ: 1,
 }

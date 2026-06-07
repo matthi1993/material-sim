@@ -9,6 +9,8 @@ struct Camera {
   viewProj : mat4x4<f32>,
   right    : vec4<f32>,
   up       : vec4<f32>,
+  tileGrid : vec4<f32>,
+  boxSize  : vec4<f32>,
 };
 
 struct Viz {
@@ -64,26 +66,43 @@ fn vs(
   @builtin(vertex_index) vi: u32,
   @builtin(instance_index) ii: u32,
 ) -> VSOut {
+  let tileX = max(1u, u32(cam.tileGrid.x + 0.5));
+  let tileY = max(1u, u32(cam.tileGrid.y + 0.5));
+  let tileZ = max(1u, u32(cam.tileGrid.z + 0.5));
+  let tileCount = tileX * tileY * tileZ;
+  let segIndex = ii % viz.maxSeg;
+  let tileIndex = ii / viz.maxSeg;
+
   var out: VSOut;
   out.color = vec3<f32>(0.35, 0.85, 1.0);
   out.alpha = 1.0;
 
-  if (ii >= segCount[0]) {
+  if (tileIndex >= tileCount || segIndex >= segCount[0]) {
     out.clip = vec4<f32>(10.0, 10.0, 10.0, 1.0); // off-screen -> clipped
     return out;
   }
 
-  let ia = segPairs[ii * 4u];
-  let ib = segPairs[ii * 4u + 1u];
+  let ia = segPairs[segIndex * 4u];
+  let ib = segPairs[segIndex * 4u + 1u];
   if (vel[ia].w <= 0.0 || vel[ib].w <= 0.0) {
     out.clip = vec4<f32>(10.0, 10.0, 10.0, 1.0);
     out.alpha = 0.0;
     return out;
   }
-  out.alpha = bitcast<f32>(segPairs[ii * 4u + 2u]) * viz.lineOpacity;
-  out.color = kindColor(segPairs[ii * 4u + 3u]);
-  let a = pos[ia].xyz;
-  let b = a - minImage(a - pos[ib].xyz, viz.box); // nearest image of partner
+  out.alpha = bitcast<f32>(segPairs[segIndex * 4u + 2u]) * viz.lineOpacity;
+  out.color = kindColor(segPairs[segIndex * 4u + 3u]);
+  let tx = tileIndex % tileX;
+  let ty = (tileIndex / tileX) % tileY;
+  let tz = tileIndex / (tileX * tileY);
+  let tileOffset = vec3<f32>(
+    (f32(tx) - 0.5 * f32(tileX - 1u)) * cam.boxSize.x,
+    (f32(ty) - 0.5 * f32(tileY - 1u)) * cam.boxSize.y,
+    (f32(tz) - 0.5 * f32(tileZ - 1u)) * cam.boxSize.z,
+  );
+  let aBase = pos[ia].xyz;
+  let bBase = aBase - minImage(aBase - pos[ib].xyz, viz.box); // nearest image of partner
+  let a = aBase + tileOffset;
+  let b = bBase + tileOffset;
 
   let world = select(b, a, vi == 0u);
   out.clip = cam.viewProj * vec4<f32>(world, 1.0);

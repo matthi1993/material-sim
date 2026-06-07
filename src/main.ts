@@ -22,7 +22,7 @@ let renderer: Renderer | null = null
 let restarting = false
 let currentRuntime = { ...DEFAULT_RUNTIME }
 let currentView: ViewOptions = { ...DEFAULT_VIEW }
-let currentProjection: ProjectionMode = 'orthographic'
+let currentProjection: ProjectionMode = 'perspective'
 let currentConfig: SimConfig | null = null
 
 app.stepsPerFrame = currentRuntime.stepsPerFrame

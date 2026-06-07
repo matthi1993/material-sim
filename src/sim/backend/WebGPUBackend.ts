@@ -34,7 +34,7 @@ import { KB } from '../params'
 
 const WORKGROUP_SIZE = 64
 const UNIFORM_BYTES = 112
-const CAMERA_BYTES = 96
+const CAMERA_BYTES = 128
 const VIZ_BYTES = 64
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
 // Cell list is used only when it pays off: the box must hold at least a 3x3x3
@@ -88,10 +88,11 @@ export class WebGPUBackend implements IGPUBackend {
   private showForces = true
   private showBonds = true
   private showBox = false
+  private periodicTilesX = 1
+  private periodicTilesY = 1
+  private periodicTilesZ = 1
   private topologyBonds: Bond[] = []
-  private moleculeIds = new Int32Array(0)
   private atomsByMolecule: number[][] = []
-  private atomParamsData = new Float32Array(0)
   private boundaryCleanupPending = false
 
   // Buffers
@@ -179,9 +180,7 @@ export class WebGPUBackend implements IGPUBackend {
     this.numAtoms = params.numAtoms
     this.numMol = params.numMolecules
     this.topologyBonds = topology.bonds.slice()
-    this.moleculeIds = new Int32Array(topology.moleculeIds)
     this.atomsByMolecule = this.groupAtomsByMolecule(topology.moleculeIds)
-    this.atomParamsData = new Float32Array(initial.atomParams)
     this.thermoTargetT = runtime.targetTemperature
     this.thermoOn = runtime.thermostatEnabled ? 1 : 0
     this.forceGuardOn = runtime.forceGuardEnabled ? 1 : 0
@@ -544,10 +543,24 @@ export class WebGPUBackend implements IGPUBackend {
     this.showForces = options.showForces
     this.showBonds = options.showBonds
     this.showBox = options.showBox
+    const legacyTileCount = Math.max(1, Math.round(options.periodicTiles ?? 1))
+    this.periodicTilesX = Math.max(1, Math.min(6, Math.round(options.periodicTilesX ?? legacyTileCount)))
+    this.periodicTilesY = Math.max(1, Math.min(6, Math.round(options.periodicTilesY ?? legacyTileCount)))
+    this.periodicTilesZ = Math.max(1, Math.min(6, Math.round(options.periodicTilesZ ?? legacyTileCount)))
     // Patch the line opacity in the viz uniform without a full rewrite.
     const buf = new ArrayBuffer(4)
     new DataView(buf).setFloat32(0, this.forceOpacity, true)
     this.device.queue.writeBuffer(this.vizUniformBuffer, 48, buf)
+  }
+
+  private renderTileGrid(): [number, number, number] {
+    if (this.boundaryMode !== 'periodic') return [1, 1, 1]
+    return [this.periodicTilesX, this.periodicTilesY, this.periodicTilesZ]
+  }
+
+  private renderTileCount(): number {
+    const [x, y, z] = this.renderTileGrid()
+    return x * y * z
   }
 
   private createComputePipelines(): void {
@@ -913,38 +926,94 @@ export class WebGPUBackend implements IGPUBackend {
     this.device.queue.submit([encoder.finish()])
   }
 
-  private isOutsideDomain(position: [number, number, number], mode: BoundaryMode): boolean {
-    const [x, y, z] = position
-    if (mode === 'periodic') {
-      return x < 0 || x >= this.params.box[0] || y < 0 || y >= this.params.box[1] || z < 0 || z >= this.params.box[2]
-    }
-    if (mode === 'open-top') {
-      return x < 0 || x >= this.params.box[0] || y < 0 || z < 0 || z >= this.params.box[2]
-    }
-    return false
+  private unwrapDelta(delta: number, boxSize: number): number {
+    if (boxSize <= 0) return delta
+    return delta - boxSize * Math.round(delta / boxSize)
   }
 
-  private invalidateAtom(
-    atomIndex: number,
+  private unwrapMoleculesForRemovedWrap(
     positions: Float32Array,
     velocities: Float32Array,
-    forces: Float32Array,
+    removedWrap: readonly [boolean, boolean, boolean],
   ): void {
-    positions[atomIndex * 4 + 0] = 1e9
-    positions[atomIndex * 4 + 1] = 1e9
-    positions[atomIndex * 4 + 2] = 1e9
-    positions[atomIndex * 4 + 3] = 0
-    velocities[atomIndex * 4 + 0] = 0
-    velocities[atomIndex * 4 + 1] = 0
-    velocities[atomIndex * 4 + 2] = 0
-    velocities[atomIndex * 4 + 3] = 0
-    forces[atomIndex * 4 + 0] = 0
-    forces[atomIndex * 4 + 1] = 0
-    forces[atomIndex * 4 + 2] = 0
-    forces[atomIndex * 4 + 3] = 0
-    this.atomParamsData[atomIndex * 4 + 0] = 0
-    this.atomParamsData[atomIndex * 4 + 1] = 0
-    this.atomParamsData[atomIndex * 4 + 2] = -1
+    const adjacency = new Map<number, number[]>()
+    for (const bond of this.topologyBonds) {
+      const a = bond.i
+      const b = bond.j
+      const listA = adjacency.get(a)
+      if (listA) listA.push(b)
+      else adjacency.set(a, [b])
+      const listB = adjacency.get(b)
+      if (listB) listB.push(a)
+      else adjacency.set(b, [a])
+    }
+
+    for (const group of this.atomsByMolecule) {
+      let anchorIndex = -1
+      for (const atomIndex of group) {
+        if (velocities[atomIndex * 4 + 3] > 0) {
+          anchorIndex = atomIndex
+          break
+        }
+      }
+      if (anchorIndex < 0) continue
+
+      const members = new Set<number>(group)
+      const visited = new Set<number>()
+      const queue: number[] = []
+      visited.add(anchorIndex)
+      queue.push(anchorIndex)
+
+      while (queue.length > 0) {
+        const atomIndex = queue.shift()!
+        const neighbors = adjacency.get(atomIndex)
+        if (!neighbors) continue
+        const baseX = positions[atomIndex * 4 + 0]
+        const baseY = positions[atomIndex * 4 + 1]
+        const baseZ = positions[atomIndex * 4 + 2]
+
+        for (const neighborIndex of neighbors) {
+          if (!members.has(neighborIndex)) continue
+          if (velocities[neighborIndex * 4 + 3] <= 0) continue
+          if (visited.has(neighborIndex)) continue
+
+          let dx = positions[neighborIndex * 4 + 0] - positions[atomIndex * 4 + 0]
+          let dy = positions[neighborIndex * 4 + 1] - positions[atomIndex * 4 + 1]
+          let dz = positions[neighborIndex * 4 + 2] - positions[atomIndex * 4 + 2]
+
+          if (removedWrap[0]) dx = this.unwrapDelta(dx, this.params.box[0])
+          if (removedWrap[1]) dy = this.unwrapDelta(dy, this.params.box[1])
+          if (removedWrap[2]) dz = this.unwrapDelta(dz, this.params.box[2])
+
+          positions[neighborIndex * 4 + 0] = baseX + dx
+          positions[neighborIndex * 4 + 1] = baseY + dy
+          positions[neighborIndex * 4 + 2] = baseZ + dz
+
+          visited.add(neighborIndex)
+          queue.push(neighborIndex)
+        }
+      }
+
+      const anchorX = positions[anchorIndex * 4 + 0]
+      const anchorY = positions[anchorIndex * 4 + 1]
+      const anchorZ = positions[anchorIndex * 4 + 2]
+
+      for (const atomIndex of group) {
+        if (velocities[atomIndex * 4 + 3] <= 0) continue
+        if (visited.has(atomIndex)) continue
+        let dx = positions[atomIndex * 4 + 0] - anchorX
+        let dy = positions[atomIndex * 4 + 1] - anchorY
+        let dz = positions[atomIndex * 4 + 2] - anchorZ
+
+        if (removedWrap[0]) dx = this.unwrapDelta(dx, this.params.box[0])
+        if (removedWrap[1]) dy = this.unwrapDelta(dy, this.params.box[1])
+        if (removedWrap[2]) dz = this.unwrapDelta(dz, this.params.box[2])
+
+        positions[atomIndex * 4 + 0] = anchorX + dx
+        positions[atomIndex * 4 + 1] = anchorY + dy
+        positions[atomIndex * 4 + 2] = anchorZ + dz
+      }
+    }
   }
 
   private async sanitizeBoundaryTransition(
@@ -958,63 +1027,14 @@ export class WebGPUBackend implements IGPUBackend {
 
       const positions = await this.readbackPositions()
       const velocities = await this.readbackVelocities()
-      const forces = new Float32Array(this.numAtoms * 4)
-      const invalidMolecules = new Set<number>()
-
-      for (const group of this.atomsByMolecule) {
-        for (const atomIndex of group) {
-          if (velocities[atomIndex * 4 + 3] <= 0) continue
-          const position: [number, number, number] = [
-            positions[atomIndex * 4 + 0],
-            positions[atomIndex * 4 + 1],
-            positions[atomIndex * 4 + 2],
-          ]
-          if (this.isOutsideDomain(position, nextMode)) {
-            invalidMolecules.add(this.moleculeIds[atomIndex])
-            break
-          }
-        }
-      }
-
       if (removedWrap[0] || removedWrap[1] || removedWrap[2]) {
-        for (const bond of this.topologyBonds) {
-          if (
-            velocities[bond.i * 4 + 3] <= 0 ||
-            velocities[bond.j * 4 + 3] <= 0
-          ) {
-            continue
-          }
-
-          const dx = positions[bond.j * 4 + 0] - positions[bond.i * 4 + 0]
-          const dy = positions[bond.j * 4 + 1] - positions[bond.i * 4 + 1]
-          const dz = positions[bond.j * 4 + 2] - positions[bond.i * 4 + 2]
-
-          if (
-            (removedWrap[0] && Math.abs(dx) > this.params.box[0] * 0.5) ||
-            (removedWrap[1] && Math.abs(dy) > this.params.box[1] * 0.5) ||
-            (removedWrap[2] && Math.abs(dz) > this.params.box[2] * 0.5)
-          ) {
-            invalidMolecules.add(this.moleculeIds[bond.i])
-          }
-        }
-      }
-
-      if (invalidMolecules.size > 0) {
-        for (const group of this.atomsByMolecule) {
-          const moleculeId = this.moleculeIds[group[0]]
-          if (!invalidMolecules.has(moleculeId)) continue
-          for (const atomIndex of group) {
-            this.invalidateAtom(atomIndex, positions, velocities, forces)
-          }
-        }
-
+        this.unwrapMoleculesForRemovedWrap(positions, velocities, removedWrap)
         this.device.queue.writeBuffer(this.posBuffer, 0, positions)
-        this.device.queue.writeBuffer(this.velBuffer, 0, velocities)
-        this.device.queue.writeBuffer(this.forceBuffer, 0, forces)
-        this.device.queue.writeBuffer(this.atomParamsBuffer, 0, this.atomParamsData)
-      } else {
-        this.cullForBoundary()
       }
+
+      // Transition can invalidate previously computed forces; reset and rebuild.
+      const forces = new Float32Array(this.numAtoms * 4)
+      this.device.queue.writeBuffer(this.forceBuffer, 0, forces)
 
       this.computeForces()
     } finally {
@@ -1090,6 +1110,7 @@ export class WebGPUBackend implements IGPUBackend {
   render(camera: CameraView): void {
     this.writeCamera(camera)
     this.ensureDepth()
+    const tileCount = this.renderTileCount()
 
     // Build the attraction segment list only when the overlay is actually drawn.
     const drawForces = this.showForces && this.showAttractions
@@ -1128,27 +1149,27 @@ export class WebGPUBackend implements IGPUBackend {
     // Atoms (sphere impostors).
     pass.setPipeline(this.renderPipeline)
     pass.setBindGroup(0, this.renderBindGroup)
-    pass.draw(6, this.numAtoms)
+    pass.draw(6, this.numAtoms * tileCount)
 
     // Periodic-box wireframe (12 edges).
     if (this.showBox) {
       pass.setPipeline(this.boxPipeline)
       pass.setBindGroup(0, this.boxBindGroup)
-      pass.draw(2, 12)
+      pass.draw(2, 12 * tileCount)
     }
 
     // Intramolecular bonds (lines).
     if (this.numBonds > 0 && this.showBonds) {
       pass.setPipeline(this.bondPipeline)
       pass.setBindGroup(0, this.bondBindGroup)
-      pass.draw(2, this.numBonds)
+      pass.draw(2, this.numBonds * tileCount)
     }
 
     // Attractive interactions: Coulomb + Lennard-Jones (lines).
     if (drawForces) {
       pass.setPipeline(this.attractionPipeline)
       pass.setBindGroup(0, this.attractionBindGroup)
-      pass.draw(2, this.maxSeg)
+      pass.draw(2, this.maxSeg * tileCount)
     }
 
     pass.end()
@@ -1158,6 +1179,7 @@ export class WebGPUBackend implements IGPUBackend {
   private writeCamera(camera: CameraView): void {
     const buf = new ArrayBuffer(CAMERA_BYTES)
     const f = new Float32Array(buf)
+    const tileGrid = this.renderTileGrid()
     f.set(camera.viewProj, 0)
     f[16] = camera.right[0]
     f[17] = camera.right[1]
@@ -1167,6 +1189,14 @@ export class WebGPUBackend implements IGPUBackend {
     f[21] = camera.up[1]
     f[22] = camera.up[2]
     f[23] = 0
+    f[24] = tileGrid[0]
+    f[25] = tileGrid[1]
+    f[26] = tileGrid[2]
+    f[27] = 0
+    f[28] = this.params.box[0]
+    f[29] = this.params.box[1]
+    f[30] = this.params.box[2]
+    f[31] = 0
     this.device.queue.writeBuffer(this.cameraBuffer, 0, buf)
   }
 
