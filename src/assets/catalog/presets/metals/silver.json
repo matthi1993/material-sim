@@ -1,0 +1,23 @@
+{
+  "key": "silver",
+  "label": "Silver crystal",
+  "topic": "metals",
+  "topicLabel": "Metals",
+  "topicOrder": 50,
+  "order": 40,
+  "config": {
+    "components": [
+      {
+        "materialKey": "silver",
+        "count": 729
+      }
+    ],
+    "box": [
+      2.64,
+      2.64,
+      2.64
+    ],
+    "dt": 0.0002,
+    "temperature": 300
+  }
+}

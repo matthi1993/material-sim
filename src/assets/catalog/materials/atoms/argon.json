@@ -1,0 +1,12 @@
+{
+  "key": "argon",
+  "label": "Argon (Ar)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Ar"
+  ],
+  "nn": 0.3821569655526436,
+  "unit": "atoms",
+  "order": 120
+}

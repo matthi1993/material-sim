@@ -1,0 +1,23 @@
+{
+  "key": "neon",
+  "label": "Neon gas",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 70,
+  "config": {
+    "components": [
+      {
+        "materialKey": "neon",
+        "count": 800
+      }
+    ],
+    "box": [
+      5,
+      5,
+      5
+    ],
+    "dt": 0.002,
+    "temperature": 50
+  }
+}

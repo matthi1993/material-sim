@@ -1,0 +1,23 @@
+{
+  "key": "hydrogen",
+  "label": "Hydrogen gas",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 20,
+  "config": {
+    "components": [
+      {
+        "materialKey": "hydrogen",
+        "count": 200
+      }
+    ],
+    "box": [
+      4,
+      4,
+      4
+    ],
+    "dt": 0.0004,
+    "temperature": 120
+  }
+}

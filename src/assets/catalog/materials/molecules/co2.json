@@ -1,0 +1,73 @@
+{
+  "key": "co2",
+  "label": "Carbon dioxide (CO2)",
+  "kind": "molecule",
+  "category": "molecules",
+  "elements": [
+    "C",
+    "O"
+  ],
+  "nn": 0.45,
+  "unit": "molecules",
+  "order": 50,
+  "molecule": {
+    "sites": [
+      {
+        "element": "C",
+        "pos": [
+          0,
+          0,
+          0
+        ],
+        "charge": 0.6512,
+        "sigma": 0.2757,
+        "epsilon": 0.2339
+      },
+      {
+        "element": "O",
+        "pos": [
+          -0.1149,
+          0,
+          0
+        ],
+        "charge": -0.3256,
+        "sigma": 0.3033,
+        "epsilon": 0.6694
+      },
+      {
+        "element": "O",
+        "pos": [
+          0.1149,
+          0,
+          0
+        ],
+        "charge": -0.3256,
+        "sigma": 0.3033,
+        "epsilon": 0.6694
+      }
+    ],
+    "bonds": [
+      {
+        "a": 0,
+        "b": 1,
+        "r0": 0.1149,
+        "k": 300000
+      },
+      {
+        "a": 0,
+        "b": 2,
+        "r0": 0.1149,
+        "k": 300000
+      }
+    ],
+    "angles": [
+      {
+        "a": 1,
+        "b": 0,
+        "c": 2,
+        "theta0": 3.141592653589793,
+        "k": 1200
+      }
+    ]
+  }
+}

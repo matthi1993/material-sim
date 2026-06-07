@@ -1,0 +1,13 @@
+{
+  "key": "salt",
+  "label": "Salt (NaCl)",
+  "kind": "ionic",
+  "category": "ions",
+  "elements": [
+    "Na",
+    "Cl"
+  ],
+  "nn": 0.3,
+  "unit": "formula units",
+  "order": 90
+}

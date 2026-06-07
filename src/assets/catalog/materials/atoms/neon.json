@@ -1,0 +1,12 @@
+{
+  "key": "neon",
+  "label": "Neon (Ne)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Ne"
+  ],
+  "nn": 0.312267528822896,
+  "unit": "atoms",
+  "order": 130
+}

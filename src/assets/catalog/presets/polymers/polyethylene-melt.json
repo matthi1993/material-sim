@@ -1,0 +1,23 @@
+{
+  "key": "polyethylene-melt",
+  "label": "Polyethylene melt",
+  "topic": "polymers",
+  "topicLabel": "Polymers",
+  "topicOrder": 30,
+  "order": 10,
+  "config": {
+    "components": [
+      {
+        "materialKey": "polyethylene",
+        "count": 8
+      }
+    ],
+    "box": [
+      8.2,
+      8.2,
+      8.2
+    ],
+    "dt": 0.0002,
+    "temperature": 260
+  }
+}

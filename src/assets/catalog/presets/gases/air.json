@@ -1,0 +1,27 @@
+{
+  "key": "air",
+  "label": "Air (N2 + O2)",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 30,
+  "config": {
+    "components": [
+      {
+        "materialKey": "nitrogen",
+        "count": 150
+      },
+      {
+        "materialKey": "oxygen",
+        "count": 40
+      }
+    ],
+    "box": [
+      4.5,
+      4.5,
+      4.5
+    ],
+    "dt": 0.0005,
+    "temperature": 220
+  }
+}

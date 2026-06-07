@@ -1,0 +1,27 @@
+{
+  "key": "brine",
+  "label": "Brine",
+  "topic": "liquids",
+  "topicLabel": "Liquids",
+  "topicOrder": 10,
+  "order": 30,
+  "config": {
+    "components": [
+      {
+        "materialKey": "water",
+        "count": 200
+      },
+      {
+        "materialKey": "salt",
+        "count": 28
+      }
+    ],
+    "box": [
+      2,
+      2,
+      2
+    ],
+    "dt": 0.0005,
+    "temperature": 320
+  }
+}

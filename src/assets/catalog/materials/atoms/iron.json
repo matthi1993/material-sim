@@ -1,0 +1,12 @@
+{
+  "key": "iron",
+  "label": "Iron (Fe)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Fe"
+  ],
+  "nn": 0.2559182314846968,
+  "unit": "atoms",
+  "order": 140
+}

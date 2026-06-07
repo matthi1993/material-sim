@@ -1,0 +1,27 @@
+{
+  "key": "noble-mix",
+  "label": "Noble gas mix",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 80,
+  "config": {
+    "components": [
+      {
+        "materialKey": "argon",
+        "count": 400
+      },
+      {
+        "materialKey": "neon",
+        "count": 400
+      }
+    ],
+    "box": [
+      6,
+      6,
+      6
+    ],
+    "dt": 0.002,
+    "temperature": 90
+  }
+}

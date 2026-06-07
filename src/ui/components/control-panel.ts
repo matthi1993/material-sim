@@ -4,21 +4,22 @@ import {
   DEFAULT_RUNTIME,
   MATERIAL_CATEGORIES,
   MATERIAL_LIST,
+  PRESET_TOPICS,
   PRESETS,
   type MaterialCategory,
   type MaterialDef,
+  type Preset,
   type SimConfig,
 } from '../../sim/params'
 import type { BoundaryMode, RuntimeConfig } from '../../sim/types'
 import './number-field'
 import './view-controls'
 
-const SETUP_DEFAULT = PRESETS[0].config
-
 type MaterialFilter = 'all' | MaterialCategory
 
 @customElement('control-panel')
 export class ControlPanel extends LitElement {
+  @property({ attribute: false }) activeConfig: SimConfig | null = null
   @property({ type: Boolean }) running = false
   @property() boundaryMode: BoundaryMode = DEFAULT_RUNTIME.boundaryMode
   @property({ type: Number }) stepsPerFrame = DEFAULT_RUNTIME.stepsPerFrame
@@ -28,19 +29,25 @@ export class ControlPanel extends LitElement {
   @property({ type: Number }) cutoffRadius = DEFAULT_RUNTIME.cutoffRadius
 
   @state() private showSetup = false
-  @state() private presetKey = PRESETS[0].key
+  @state() private presetKey = initialPreset()?.key ?? ''
   @state() private filter: MaterialFilter = 'all'
   @state() private search = ''
 
-  @state() private amounts: Record<string, number> = seedAmounts()
-  @state() private bx = SETUP_DEFAULT.box[0]
-  @state() private by = SETUP_DEFAULT.box[1]
-  @state() private bz = SETUP_DEFAULT.box[2]
-  @state() private temp = SETUP_DEFAULT.temperature
-  @state() private dtFs = SETUP_DEFAULT.dt * 1000
+  @state() private amounts: Record<string, number> = seedAmounts(initialSetupConfig())
+  @state() private bx = initialSetupConfig().box[0]
+  @state() private by = initialSetupConfig().box[1]
+  @state() private bz = initialSetupConfig().box[2]
+  @state() private temp = initialSetupConfig().temperature
+  @state() private dtFs = initialSetupConfig().dt * 1000
 
   firstUpdated(): void {
     this.startSimulation()
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    if (changed.has('activeConfig') && this.activeConfig) {
+      this.applyConfig(this.activeConfig)
+    }
   }
 
   private openSetup = (): void => {
@@ -78,27 +85,37 @@ export class ControlPanel extends LitElement {
     if (!preset) return
 
     this.presetKey = key
-    const next: Record<string, number> = zeroAmounts()
-    for (const comp of preset.config.components) next[comp.materialKey] = comp.count
-
-    this.amounts = next
-    this.bx = preset.config.box[0]
-    this.by = preset.config.box[1]
-    this.bz = preset.config.box[2]
-    this.dtFs = preset.config.dt * 1000
-    this.temp = preset.config.temperature
+    this.applyConfig(preset.config)
   }
 
   private resetSetup = (): void => {
+    const setupDefault = initialSetupConfig()
     this.presetKey = ''
     this.search = ''
     this.filter = 'all'
     this.amounts = zeroAmounts()
-    this.bx = SETUP_DEFAULT.box[0]
-    this.by = SETUP_DEFAULT.box[1]
-    this.bz = SETUP_DEFAULT.box[2]
-    this.dtFs = SETUP_DEFAULT.dt * 1000
-    this.temp = SETUP_DEFAULT.temperature
+    this.bx = setupDefault.box[0]
+    this.by = setupDefault.box[1]
+    this.bz = setupDefault.box[2]
+    this.dtFs = setupDefault.dt * 1000
+    this.temp = setupDefault.temperature
+  }
+
+  private applyConfig(config: SimConfig): void {
+    const next = zeroAmounts()
+    for (const component of config.components) {
+      next[component.materialKey] = component.count
+    }
+
+    this.amounts = next
+    this.bx = config.box[0]
+    this.by = config.box[1]
+    this.bz = config.box[2]
+    this.dtFs = config.dt * 1000
+    this.temp = config.temperature
+
+    const matchingPreset = PRESETS.find((preset) => configEquals(preset.config, config))
+    this.presetKey = matchingPreset?.key ?? ''
   }
 
   private buildConfig(): SimConfig {
@@ -280,16 +297,7 @@ export class ControlPanel extends LitElement {
           </header>
 
           <div class="preset-strip">
-            ${PRESETS.map(
-              (p) => html`
-                <button
-                  class="preset-pill ${this.presetKey === p.key ? 'active' : ''}"
-                  @click=${() => this.applyPreset(p.key)}
-                >
-                  ${p.label}
-                </button>
-              `,
-            )}
+            ${this.renderPresetGroups()}
           </div>
 
           <div class="dialog-grid">
@@ -432,13 +440,38 @@ export class ControlPanel extends LitElement {
     `
   }
 
+  private renderPresetGroups(): unknown {
+    return PRESET_TOPICS.map((topic) => {
+      const presetsInTopic = PRESETS.filter((preset) => preset.topic === topic.key)
+      if (presetsInTopic.length === 0) return null
+
+      return html`
+        <div class="preset-group">
+          <p class="preset-group-title">${topic.label}</p>
+          <div class="preset-group-items">
+            ${presetsInTopic.map(
+              (preset) => html`
+                <button
+                  class="preset-pill ${this.presetKey === preset.key ? 'active' : ''}"
+                  @click=${() => this.applyPreset(preset.key)}
+                >
+                  ${preset.label}
+                </button>
+              `,
+            )}
+          </div>
+        </div>
+      `
+    })
+  }
+
   static styles = css`
     .panel {
       position: absolute;
-      top: var(--space-md);
+      top: calc(var(--titlebar-height) + var(--space-md));
       left: var(--space-md);
       width: var(--panel-width);
-      max-height: calc(100vh - 2 * var(--space-md));
+      max-height: calc(100vh - var(--titlebar-height) - 2 * var(--space-md));
       overflow-y: auto;
       box-sizing: border-box;
       padding: var(--space-lg);
@@ -697,11 +730,31 @@ export class ControlPanel extends LitElement {
     }
 
     .preset-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      gap: var(--space-sm);
+      padding-bottom: var(--space-sm);
+      border-bottom: 1px solid var(--color-panel-border);
+    }
+
+    .preset-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+
+    .preset-group-title {
+      margin: 0;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--color-text-dim);
+    }
+
+    .preset-group-items {
       display: flex;
       flex-wrap: wrap;
       gap: var(--space-xs);
-      padding-bottom: var(--space-sm);
-      border-bottom: 1px solid var(--color-panel-border);
     }
 
     .preset-pill {
@@ -963,10 +1016,41 @@ function zeroAmounts(): Record<string, number> {
   return next
 }
 
-function seedAmounts(): Record<string, number> {
+function seedAmounts(config: SimConfig): Record<string, number> {
   const next = zeroAmounts()
-  for (const comp of PRESETS[0].config.components) next[comp.materialKey] = comp.count
+  for (const comp of config.components) next[comp.materialKey] = comp.count
   return next
+}
+
+function initialPreset(): Preset | undefined {
+  return PRESETS[0]
+}
+
+function initialSetupConfig(): SimConfig {
+  return initialPreset()?.config ?? {
+    components: [{ materialKey: 'argon', count: 1 }],
+    box: [2, 2, 2],
+    dt: 0.001,
+    temperature: 300,
+  }
+}
+
+function configEquals(left: SimConfig, right: SimConfig): boolean {
+  if (left.dt !== right.dt || left.temperature !== right.temperature) return false
+  if (left.box[0] !== right.box[0] || left.box[1] !== right.box[1] || left.box[2] !== right.box[2]) {
+    return false
+  }
+  if (left.components.length !== right.components.length) return false
+
+  const leftComponents = [...left.components].sort((a, b) => a.materialKey.localeCompare(b.materialKey))
+  const rightComponents = [...right.components].sort((a, b) => a.materialKey.localeCompare(b.materialKey))
+  for (let i = 0; i < leftComponents.length; i++) {
+    const leftComponent = leftComponents[i]
+    const rightComponent = rightComponents[i]
+    if (leftComponent.materialKey !== rightComponent.materialKey) return false
+    if (leftComponent.count !== rightComponent.count) return false
+  }
+  return true
 }
 
 function atomsPerUnit(m: MaterialDef): number {

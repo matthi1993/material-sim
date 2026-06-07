@@ -1,0 +1,23 @@
+{
+  "key": "copper",
+  "label": "Copper crystal",
+  "topic": "metals",
+  "topicLabel": "Metals",
+  "topicOrder": 50,
+  "order": 20,
+  "config": {
+    "components": [
+      {
+        "materialKey": "copper",
+        "count": 729
+      }
+    ],
+    "box": [
+      2.34,
+      2.34,
+      2.34
+    ],
+    "dt": 0.0002,
+    "temperature": 300
+  }
+}

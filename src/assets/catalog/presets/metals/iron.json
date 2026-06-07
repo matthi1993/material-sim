@@ -1,0 +1,23 @@
+{
+  "key": "iron",
+  "label": "Iron crystal",
+  "topic": "metals",
+  "topicLabel": "Metals",
+  "topicOrder": 50,
+  "order": 10,
+  "config": {
+    "components": [
+      {
+        "materialKey": "iron",
+        "count": 729
+      }
+    ],
+    "box": [
+      2.3,
+      2.3,
+      2.3
+    ],
+    "dt": 0.0002,
+    "temperature": 300
+  }
+}

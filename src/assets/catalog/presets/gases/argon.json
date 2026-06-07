@@ -1,0 +1,23 @@
+{
+  "key": "argon",
+  "label": "Argon gas",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 60,
+  "config": {
+    "components": [
+      {
+        "materialKey": "argon",
+        "count": 800
+      }
+    ],
+    "box": [
+      6,
+      6,
+      6
+    ],
+    "dt": 0.002,
+    "temperature": 120
+  }
+}

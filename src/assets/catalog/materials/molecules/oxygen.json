@@ -1,0 +1,47 @@
+{
+  "key": "oxygen",
+  "label": "Oxygen (O2)",
+  "kind": "molecule",
+  "category": "molecules",
+  "elements": [
+    "O"
+  ],
+  "nn": 0.33,
+  "unit": "molecules",
+  "order": 20,
+  "molecule": {
+    "sites": [
+      {
+        "element": "O",
+        "pos": [
+          -0.0604,
+          0,
+          0
+        ],
+        "charge": 0,
+        "sigma": 0.3017,
+        "epsilon": 0.5021
+      },
+      {
+        "element": "O",
+        "pos": [
+          0.0604,
+          0,
+          0
+        ],
+        "charge": 0,
+        "sigma": 0.3017,
+        "epsilon": 0.5021
+      }
+    ],
+    "bonds": [
+      {
+        "a": 0,
+        "b": 1,
+        "r0": 0.1208,
+        "k": 300000
+      }
+    ],
+    "angles": []
+  }
+}

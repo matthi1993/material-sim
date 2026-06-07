@@ -1,0 +1,12 @@
+{
+  "key": "gold",
+  "label": "Gold (Au)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Au"
+  ],
+  "nn": 0.2950012937700558,
+  "unit": "atoms",
+  "order": 160
+}

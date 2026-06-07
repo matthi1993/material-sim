@@ -1,0 +1,13 @@
+{
+  "key": "kbr",
+  "label": "Potassium bromide (KBr)",
+  "kind": "ionic",
+  "category": "ions",
+  "elements": [
+    "K",
+    "Br"
+  ],
+  "nn": 0.33,
+  "unit": "formula units",
+  "order": 110
+}

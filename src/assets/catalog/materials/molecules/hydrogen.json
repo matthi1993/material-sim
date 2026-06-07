@@ -1,0 +1,47 @@
+{
+  "key": "hydrogen",
+  "label": "Hydrogen (H2)",
+  "kind": "molecule",
+  "category": "molecules",
+  "elements": [
+    "H"
+  ],
+  "nn": 0.3,
+  "unit": "molecules",
+  "order": 30,
+  "molecule": {
+    "sites": [
+      {
+        "element": "H",
+        "pos": [
+          -0.03705,
+          0,
+          0
+        ],
+        "charge": 0,
+        "sigma": 0.2958,
+        "epsilon": 0.118
+      },
+      {
+        "element": "H",
+        "pos": [
+          0.03705,
+          0,
+          0
+        ],
+        "charge": 0,
+        "sigma": 0.2958,
+        "epsilon": 0.118
+      }
+    ],
+    "bonds": [
+      {
+        "a": 0,
+        "b": 1,
+        "r0": 0.0741,
+        "k": 200000
+      }
+    ],
+    "angles": []
+  }
+}

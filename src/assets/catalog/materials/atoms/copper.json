@@ -1,0 +1,12 @@
+{
+  "key": "copper",
+  "label": "Copper (Cu)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Cu"
+  ],
+  "nn": 0.2626536608032485,
+  "unit": "atoms",
+  "order": 150
+}

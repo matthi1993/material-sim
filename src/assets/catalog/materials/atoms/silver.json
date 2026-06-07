@@ -1,0 +1,12 @@
+{
+  "key": "silver",
+  "label": "Silver (Ag)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Ag"
+  ],
+  "nn": 0.29668316071821854,
+  "unit": "atoms",
+  "order": 170
+}

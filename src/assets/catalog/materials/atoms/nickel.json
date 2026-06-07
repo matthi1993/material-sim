@@ -1,0 +1,12 @@
+{
+  "key": "nickel",
+  "label": "Nickel (Ni)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Ni"
+  ],
+  "nn": 0.2561424807777825,
+  "unit": "atoms",
+  "order": 180
+}

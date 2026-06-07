@@ -45,6 +45,7 @@
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
 
   --panel-width: 360px;
+  --titlebar-height: 34px;
 
   /* Floating overlay surface (stats, legend). */
   --color-overlay: color-mix(in srgb, var(--color-panel) 82%, transparent);

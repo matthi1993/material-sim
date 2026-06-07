@@ -1,0 +1,23 @@
+{
+  "key": "oxygen",
+  "label": "Oxygen gas",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 10,
+  "config": {
+    "components": [
+      {
+        "materialKey": "oxygen",
+        "count": 160
+      }
+    ],
+    "box": [
+      4,
+      4,
+      4
+    ],
+    "dt": 0.0005,
+    "temperature": 200
+  }
+}

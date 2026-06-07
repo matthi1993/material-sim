@@ -1,0 +1,13 @@
+{
+  "key": "kcl",
+  "label": "Potassium chloride (KCl)",
+  "kind": "ionic",
+  "category": "ions",
+  "elements": [
+    "K",
+    "Cl"
+  ],
+  "nn": 0.31,
+  "unit": "formula units",
+  "order": 100
+}

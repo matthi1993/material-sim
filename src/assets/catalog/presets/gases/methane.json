@@ -1,0 +1,23 @@
+{
+  "key": "methane",
+  "label": "Methane",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 50,
+  "config": {
+    "components": [
+      {
+        "materialKey": "methane",
+        "count": 130
+      }
+    ],
+    "box": [
+      4,
+      4,
+      4
+    ],
+    "dt": 0.0004,
+    "temperature": 150
+  }
+}

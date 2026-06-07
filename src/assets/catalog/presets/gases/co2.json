@@ -1,0 +1,23 @@
+{
+  "key": "co2",
+  "label": "Carbon dioxide",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 40,
+  "config": {
+    "components": [
+      {
+        "materialKey": "co2",
+        "count": 130
+      }
+    ],
+    "box": [
+      4,
+      4,
+      4
+    ],
+    "dt": 0.0005,
+    "temperature": 250
+  }
+}

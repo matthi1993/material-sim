@@ -116,6 +116,29 @@ export class SimulationEngine {
     return this.running
   }
 
+  async snapshotAtomState(): Promise<{
+    positions: Float32Array
+    velocities: Float32Array
+    numAtoms: number
+    simulatedTimePs: number
+  } | null> {
+    if (!this.params) return null
+    const [positions, velocities] = await Promise.all([
+      this.backend.readbackPositions(),
+      this.backend.readbackVelocities(),
+    ])
+    return {
+      positions,
+      velocities,
+      numAtoms: this.params.numAtoms,
+      simulatedTimePs: this.simulatedTimePs,
+    }
+  }
+
+  restoreSimulatedTime(simulatedTimePs: number): void {
+    this.simulatedTimePs = Math.max(0, simulatedTimePs)
+  }
+
   destroy(): void {
     this.loopActive = false
     this.running = false

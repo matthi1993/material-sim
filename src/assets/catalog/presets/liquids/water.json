@@ -1,0 +1,23 @@
+{
+  "key": "water",
+  "label": "Water",
+  "topic": "liquids",
+  "topicLabel": "Liquids",
+  "topicOrder": 10,
+  "order": 10,
+  "config": {
+    "components": [
+      {
+        "materialKey": "water",
+        "count": 267
+      }
+    ],
+    "box": [
+      2,
+      2,
+      2
+    ],
+    "dt": 0.0005,
+    "temperature": 298
+  }
+}
