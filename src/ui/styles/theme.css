@@ -44,7 +44,7 @@
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
 
-  --panel-width: 290px;
+  --panel-width: 360px;
 
   /* Floating overlay surface (stats, legend). */
   --color-overlay: color-mix(in srgb, var(--color-panel) 82%, transparent);

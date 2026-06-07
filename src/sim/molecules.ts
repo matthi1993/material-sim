@@ -120,6 +120,40 @@ export const METHANE_MOL: MoleculeTemplate = {
   angles: methaneAngles(),
 }
 
+// --- Coarse-grained polymer chain (C24) -----------------------------------
+const POLYMER_BOND = 0.154
+const POLYMER_K_BOND = 180000
+const POLYMER_K_ANGLE = 320
+const POLYMER_LENGTH = 24
+
+function makeLinearCarbonPolymer(length: number): MoleculeTemplate {
+  const sites: MoleculeSite[] = []
+  const bonds: MoleculeBondT[] = []
+  const angles: MoleculeAngleT[] = []
+
+  const half = (length - 1) * 0.5
+  for (let i = 0; i < length; i++) {
+    const x = (i - half) * POLYMER_BOND
+    sites.push({
+      el: ELEMENTS.C,
+      pos: [x, 0, 0],
+      charge: 0,
+      sigma: 0.36,
+      epsilon: 0.32,
+    })
+    if (i > 0) {
+      bonds.push({ a: i - 1, b: i, r0: POLYMER_BOND, k: POLYMER_K_BOND })
+    }
+    if (i > 1) {
+      angles.push({ a: i - 2, b: i - 1, c: i, theta0: Math.PI, k: POLYMER_K_ANGLE })
+    }
+  }
+
+  return { sites, bonds, angles }
+}
+
+export const POLYMER_C24_MOL = makeLinearCarbonPolymer(POLYMER_LENGTH)
+
 function methaneAngles(): MoleculeAngleT[] {
   const angles: MoleculeAngleT[] = []
   const theta0 = 109.47 * DEG

@@ -6,6 +6,12 @@ description: coding rules for app
 
 ## Non-negotiable rules
 
+## coding rules
+name variables and functions descriptively. Avoid abbreviations.
+put business logic in services and UI logic in components. Avoid mixing them.
+delete old code if no longer used. Don't comment it out or set deprecated.
+use domain driven design principles. Model the code around the problem domain, not technical layers.
+
 ## File size and structure
 keep files under ~300 lines. If it grows beyond that, split it up.
 seperate by domain (e.g. sim logic vs UI) and layer (e.g. backend vs engine).

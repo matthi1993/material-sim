@@ -10,6 +10,7 @@ import {
   METHANE_MOL,
   NITROGEN_MOL,
   OXYGEN_MOL,
+  POLYMER_C24_MOL,
   WATER_MOL,
   type MoleculeTemplate,
 } from './molecules'
@@ -118,6 +119,17 @@ export const METHANE: MaterialDef = {
   unit: 'molecules',
 }
 
+export const POLYMER: MaterialDef = {
+  key: 'polymer-c24',
+  label: 'Polymer chain (C24)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.C],
+  molecule: POLYMER_C24_MOL,
+  nn: 0.65,
+  unit: 'chains',
+}
+
 // --- Ions ------------------------------------------------------------------
 
 export const SALT: MaterialDef = {
@@ -180,6 +192,7 @@ export const MATERIALS: Record<string, MaterialDef> = {
   nitrogen: NITROGEN,
   co2: CARBON_DIOXIDE,
   methane: METHANE,
+  'polymer-c24': POLYMER,
   salt: SALT,
   kcl: POTASSIUM_CHLORIDE,
   kbr: POTASSIUM_BROMIDE,
@@ -199,6 +212,7 @@ export const MATERIAL_LIST: MaterialDef[] = [
   NITROGEN,
   CARBON_DIOXIDE,
   METHANE,
+  POLYMER,
   SALT,
   POTASSIUM_CHLORIDE,
   POTASSIUM_BROMIDE,
@@ -350,6 +364,17 @@ export const PRESETS: Preset[] = [
       cutoffRadius: 1.1,
       dt: 0.0004,
       temperature: 150,
+    },
+  },
+  {
+    key: 'polymer-melt',
+    label: 'Polymer melt',
+    config: {
+      components: [{ materialKey: 'polymer-c24', count: 44 }],
+      box: [5.0, 5.0, 5.0],
+      cutoffRadius: 1.1,
+      dt: 0.0004,
+      temperature: 420,
     },
   },
   {

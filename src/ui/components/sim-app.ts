@@ -20,6 +20,8 @@ export class SimApp extends LitElement {
   @property({ type: Boolean }) running = false
   @property({ type: Number }) stepsPerFrame = DEFAULT_RUNTIME.stepsPerFrame
   @property() boundaryMode: BoundaryMode = DEFAULT_RUNTIME.boundaryMode
+  @property({ type: Number }) targetTemperature = DEFAULT_RUNTIME.targetTemperature
+  @property({ type: Boolean }) thermostatEnabled = DEFAULT_RUNTIME.thermostatEnabled
 
   /** Live camera frame source for the orientation gizmo (set by main.ts). */
   @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
@@ -64,11 +66,16 @@ export class SimApp extends LitElement {
   render() {
     return html`
       <canvas></canvas>
-      <control-panel .running=${this.running} .boundaryMode=${this.boundaryMode}></control-panel>
+      <control-panel
+        .running=${this.running}
+        .boundaryMode=${this.boundaryMode}
+        .stepsPerFrame=${this.stepsPerFrame}
+        .targetTemperature=${this.targetTemperature}
+        .thermostatEnabled=${this.thermostatEnabled}
+      ></control-panel>
       <div class="right-stack">
         <stats-overlay
           .stats=${this.stats}
-          .stepsPerFrame=${this.stepsPerFrame}
         ></stats-overlay>
         <view-gizmo .basisProvider=${this.basisProvider}></view-gizmo>
       </div>

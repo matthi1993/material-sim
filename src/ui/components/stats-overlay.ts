@@ -1,8 +1,7 @@
 import { LitElement, css, html } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
-import type { RuntimeConfig, SimStats } from '../../sim/types'
+import type { SimStats } from '../../sim/types'
 import { formatStats } from '../stats'
-import './number-field'
 
 /**
  * Floating live-stats readout pinned to the top-right of the viewport.
@@ -11,34 +10,11 @@ import './number-field'
 @customElement('stats-overlay')
 export class StatsOverlay extends LitElement {
   @property({ attribute: false }) stats: SimStats | null = null
-  @property({ type: Number }) stepsPerFrame = 8
-
-  private setRuntime(patch: Partial<RuntimeConfig>): void {
-    this.dispatchEvent(
-      new CustomEvent<Partial<RuntimeConfig>>('runtime-change', {
-        detail: patch,
-        bubbles: true,
-        composed: true,
-      }),
-    )
-  }
 
   render() {
     const s = this.stats ? formatStats(this.stats) : null
     return html`
       <div class="overlay">
-        <div class="controls">
-          <number-field
-            label="Speed"
-            unit="steps/frame"
-            .value=${this.stepsPerFrame}
-            min="1"
-            max="64"
-            step="1"
-            @value-change=${(e: CustomEvent<number>) =>
-              this.setRuntime({ stepsPerFrame: Math.max(1, Math.round(e.detail)) })}
-          ></number-field>
-        </div>
         <div class="stats">
           <div><span>FPS</span><b>${s ? s.fps : '—'}</b></div>
           <div><span>Atoms</span><b>${s ? s.atoms : '—'}</b></div>
@@ -61,11 +37,6 @@ export class StatsOverlay extends LitElement {
       border-radius: var(--radius);
       backdrop-filter: blur(8px);
       font-size: 0.8rem;
-    }
-    .controls {
-      display: flex;
-      flex-direction: column;
-      gap: var(--space-sm);
     }
     .stats {
       display: flex;

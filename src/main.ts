@@ -21,6 +21,8 @@ let currentProjection: ProjectionMode = 'orthographic'
 
 app.stepsPerFrame = currentRuntime.stepsPerFrame
 app.boundaryMode = currentRuntime.boundaryMode
+app.targetTemperature = currentRuntime.targetTemperature
+app.thermostatEnabled = currentRuntime.thermostatEnabled
 
 // Let the orientation gizmo read the live camera frame each frame.
 app.basisProvider = () => renderer?.getBasis() ?? null
@@ -54,6 +56,8 @@ async function restart(config: SimConfig): Promise<void> {
     currentRuntime = runtime
     app.stepsPerFrame = currentRuntime.stepsPerFrame
     app.boundaryMode = currentRuntime.boundaryMode
+    app.targetTemperature = currentRuntime.targetTemperature
+    app.thermostatEnabled = currentRuntime.thermostatEnabled
 
     await engine.start(params, topology, initial, runtime)
     engine.setViewOptions(currentView)
@@ -75,6 +79,8 @@ app.addEventListener('runtime-change', (e) => {
   currentRuntime = { ...currentRuntime, ...patch }
   app.stepsPerFrame = currentRuntime.stepsPerFrame
   app.boundaryMode = currentRuntime.boundaryMode
+  app.targetTemperature = currentRuntime.targetTemperature
+  app.thermostatEnabled = currentRuntime.thermostatEnabled
   engine?.setRuntime(currentRuntime)
 })
 
