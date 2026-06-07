@@ -37,6 +37,8 @@ fn elementStyle(id: f32) -> vec4<f32> {
     case 10: { return vec4<f32>(1.00, 0.82, 0.14, 0.026); } // Au gold
     case 11: { return vec4<f32>(0.78, 0.80, 0.84, 0.026); } // Ag silver
     case 12: { return vec4<f32>(0.46, 0.62, 0.55, 0.023); } // Ni nickel
+    case 13: { return vec4<f32>(0.44, 0.46, 0.50, 0.017); } // C  carbon
+    case 14: { return vec4<f32>(0.29, 0.42, 1.00, 0.018); } // N  nitrogen
     default: { return vec4<f32>(0.70, 0.72, 0.78, 0.020); }
   }
 }

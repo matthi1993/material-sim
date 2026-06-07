@@ -5,6 +5,8 @@ import { customElement, property } from 'lit/decorators.js'
 const ELEMENT_VARS: Record<string, string> = {
   O: '--el-o',
   H: '--el-h',
+  C: '--el-c',
+  N: '--el-n',
   Na: '--el-na',
   Cl: '--el-cl',
   Ar: '--el-ar',

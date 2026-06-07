@@ -4,6 +4,17 @@
 
 import type { CameraView, Vec3 } from '../sim/types'
 
+export type ProjectionMode = 'orthographic' | 'perspective'
+/** Signed principal axis the camera can snap to look down. */
+export type AxisKey = '+x' | '-x' | '+y' | '-y' | '+z' | '-z'
+
+/** Orthonormal camera frame in world space (for the orientation gizmo). */
+export interface CameraBasis {
+  right: Vec3
+  up: Vec3
+  forward: Vec3
+}
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement
 
@@ -11,6 +22,7 @@ export class Renderer {
   private distance = 5
   private azimuth = 0.6
   private elevation = 0.4
+  private projection: ProjectionMode = 'orthographic'
 
   private dragging = false
   private lastX = 0
@@ -28,6 +40,44 @@ export class Renderer {
     this.distance = Math.max(box[0], box[1], box[2]) * 1.8
   }
 
+  setProjection(mode: ProjectionMode): void {
+    this.projection = mode
+  }
+
+  getProjection(): ProjectionMode {
+    return this.projection
+  }
+
+  /** Orbit so the camera looks straight down a signed principal axis. */
+  snapToAxis(axis: AxisKey): void {
+    const halfPi = Math.PI / 2 - 1e-3 // avoid the gimbal pole at exactly ±90°
+    switch (axis) {
+      case '+x': this.azimuth = 0; this.elevation = 0; break
+      case '-x': this.azimuth = Math.PI; this.elevation = 0; break
+      case '+z': this.azimuth = halfPi; this.elevation = 0; break
+      case '-z': this.azimuth = -halfPi; this.elevation = 0; break
+      case '+y': this.elevation = halfPi; break
+      case '-y': this.elevation = -halfPi; break
+    }
+  }
+
+  /** Current camera frame, used by the orientation gizmo. */
+  getBasis(): CameraBasis {
+    const eye = this.computeEye()
+    const { right, up } = lookAt(eye, this.target, [0, 1, 0])
+    const forward = normalize(sub(this.target, eye))
+    return { right, up, forward }
+  }
+
+  private computeEye(): Vec3 {
+    const ce = Math.cos(this.elevation)
+    return [
+      this.target[0] + this.distance * ce * Math.cos(this.azimuth),
+      this.target[1] + this.distance * Math.sin(this.elevation),
+      this.target[2] + this.distance * ce * Math.sin(this.azimuth),
+    ]
+  }
+
   resize(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     const w = Math.max(1, Math.floor(this.canvas.clientWidth * dpr))
@@ -42,20 +92,20 @@ export class Renderer {
     this.resize()
     const aspect = this.canvas.width / this.canvas.height
 
-    const ce = Math.cos(this.elevation)
-    const eye: Vec3 = [
-      this.target[0] + this.distance * ce * Math.cos(this.azimuth),
-      this.target[1] + this.distance * Math.sin(this.elevation),
-      this.target[2] + this.distance * ce * Math.sin(this.azimuth),
-    ]
-
+    const eye = this.computeEye()
     const worldUp: Vec3 = [0, 1, 0]
     const { view, right, up } = lookAt(eye, this.target, worldUp)
-    // Orthographic: vertical extent scales with camera distance so the wheel
-    // still zooms. No perspective foreshortening.
-    const halfH = this.distance * 0.5
-    const halfW = halfH * aspect
-    const proj = orthographicZO(-halfW, halfW, -halfH, halfH, 0.05, 1000)
+
+    let proj: Float32Array
+    if (this.projection === 'perspective') {
+      proj = perspectiveZO((45 * Math.PI) / 180, aspect, 0.02, 1000)
+    } else {
+      // Orthographic: vertical extent scales with camera distance so the wheel
+      // still zooms. No perspective foreshortening.
+      const halfH = this.distance * 0.5
+      const halfW = halfH * aspect
+      proj = orthographicZO(-halfW, halfW, -halfH, halfH, 0.05, 1000)
+    }
     const viewProj = multiply(proj, view)
 
     return { viewProj, right, up }
@@ -162,6 +212,23 @@ function orthographicZO(
   m[13] = -(top + bottom) / (top - bottom)
   m[14] = near / (near - far)
   m[15] = 1
+  return m
+}
+
+/** Right-handed perspective with z mapped to [0, 1] (WebGPU), column-major. */
+function perspectiveZO(
+  fovy: number,
+  aspect: number,
+  near: number,
+  far: number,
+): Float32Array {
+  const f = 1 / Math.tan(fovy / 2)
+  const m = new Float32Array(16)
+  m[0] = f / aspect
+  m[5] = f
+  m[10] = far / (near - far)
+  m[11] = -1
+  m[14] = (near * far) / (near - far)
   return m
 }
 

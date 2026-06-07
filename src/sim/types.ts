@@ -77,6 +77,13 @@ export interface Topology {
   bonds: Bond[]
   angles: Angle[]
   dihedrals: Dihedral[]
+  /**
+   * Per bonded-molecule ranges into the flat bonds/angles lists, 4 u32 each:
+   * [bondStart, bondCount, angleStart, angleCount]. One entry per molecule the
+   * bonded GPU kernel processes (length = numMolecules * 4). Bonds/angles are
+   * emitted molecule-major so each molecule's ranges are contiguous.
+   */
+  molRanges: Uint32Array
 }
 
 /**

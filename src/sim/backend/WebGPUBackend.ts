@@ -92,7 +92,9 @@ export class WebGPUBackend implements IGPUBackend {
   private atomParamsBuffer!: GPUBuffer
   private reductionBuffer!: GPUBuffer
   private vizUniformBuffer!: GPUBuffer
-  private bondPairsBuffer!: GPUBuffer
+  private molRangesBuffer!: GPUBuffer
+  private molBondsBuffer!: GPUBuffer
+  private molAnglesBuffer!: GPUBuffer
   private segCountBuffer!: GPUBuffer
   private segPairsBuffer!: GPUBuffer
   private cellHeadBuffer!: GPUBuffer
@@ -106,6 +108,8 @@ export class WebGPUBackend implements IGPUBackend {
   // Compute
   private computeLayout!: GPUBindGroupLayout
   private computeBindGroup!: GPUBindGroup
+  private bondedLayout!: GPUBindGroupLayout
+  private bondedBindGroup!: GPUBindGroup
   private pipelines!: {
     lj: GPUComputePipeline
     coulomb: GPUComputePipeline
@@ -146,7 +150,15 @@ export class WebGPUBackend implements IGPUBackend {
     }
     const adapter = await navigator.gpu.requestAdapter()
     if (!adapter) throw new Error('No WebGPU adapter found.')
-    this.device = await adapter.requestDevice()
+    const requestedStorageBuffers = Math.min(
+      10,
+      adapter.limits.maxStorageBuffersPerShaderStage,
+    )
+    this.device = await adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBuffersPerShaderStage: requestedStorageBuffers,
+      },
+    })
 
     this.params = params
     this.numAtoms = params.numAtoms
@@ -293,21 +305,56 @@ export class WebGPUBackend implements IGPUBackend {
   private createVizBuffers(topology: Topology): void {
     const d = this.device
 
-    // One index pair per intramolecular bond.
     this.numBonds = topology.bonds.length
     const firstBond = topology.bonds[0]
     this.bondR0 = firstBond ? firstBond.r0 : 0
     this.bondK = firstBond ? firstBond.k : 0
-    const bondPairs = new Uint32Array(Math.max(1, this.numBonds) * 2)
-    for (let b = 0; b < this.numBonds; b++) {
-      bondPairs[b * 2] = topology.bonds[b].i
-      bondPairs[b * 2 + 1] = topology.bonds[b].j
-    }
-    this.bondPairsBuffer = d.createBuffer({
-      size: bondPairs.byteLength,
+
+    // Per-molecule ranges into the flat bond/angle lists (4 u32 each). Consumed
+    // by the bonded force kernel (group 1, binding 0).
+    const ranges =
+      topology.molRanges.length > 0 ? topology.molRanges : new Uint32Array(4)
+    this.molRangesBuffer = d.createBuffer({
+      size: ranges.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
-    d.queue.writeBuffer(this.bondPairsBuffer, 0, bondPairs)
+    d.queue.writeBuffer(this.molRangesBuffer, 0, ranges)
+
+    // Flat bond list: 16 bytes each — (i, j) u32, (r0, k) f32. Shared by the
+    // bonded force kernel and the bond visualization pass.
+    const bondBuf = new ArrayBuffer(Math.max(1, this.numBonds) * 16)
+    const bondDv = new DataView(bondBuf)
+    for (let b = 0; b < this.numBonds; b++) {
+      const bd = topology.bonds[b]
+      bondDv.setUint32(b * 16 + 0, bd.i, true)
+      bondDv.setUint32(b * 16 + 4, bd.j, true)
+      bondDv.setFloat32(b * 16 + 8, bd.r0, true)
+      bondDv.setFloat32(b * 16 + 12, bd.k, true)
+    }
+    this.molBondsBuffer = d.createBuffer({
+      size: bondBuf.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    d.queue.writeBuffer(this.molBondsBuffer, 0, bondBuf)
+
+    // Flat angle list: 32 bytes each — (i, j-center, k, _) u32,
+    // (theta0, kTheta, _, _) f32.
+    const numAngles = topology.angles.length
+    const angleBuf = new ArrayBuffer(Math.max(1, numAngles) * 32)
+    const angleDv = new DataView(angleBuf)
+    for (let a = 0; a < numAngles; a++) {
+      const an = topology.angles[a]
+      angleDv.setUint32(a * 32 + 0, an.i, true)
+      angleDv.setUint32(a * 32 + 4, an.j, true)
+      angleDv.setUint32(a * 32 + 8, an.k, true)
+      angleDv.setFloat32(a * 32 + 16, an.theta0, true)
+      angleDv.setFloat32(a * 32 + 20, an.kTheta, true)
+    }
+    this.molAnglesBuffer = d.createBuffer({
+      size: angleBuf.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    d.queue.writeBuffer(this.molAnglesBuffer, 0, angleBuf)
 
     // Dynamic attraction segments rebuilt on the GPU every frame. Each segment
     // is 4 u32 (atom i, atom j, packed alpha, kind). Sized for several
@@ -406,6 +453,28 @@ export class WebGPUBackend implements IGPUBackend {
       bindGroupLayouts: [this.computeLayout],
     })
 
+    // The bonded kernel adds a second bind group (group 1) holding the flat
+    // per-molecule bond/angle data; molecules own disjoint atoms so it writes
+    // the shared force buffer without atomics.
+    this.bondedLayout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      ],
+    })
+    this.bondedBindGroup = d.createBindGroup({
+      layout: this.bondedLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.molRangesBuffer } },
+        { binding: 1, resource: { buffer: this.molBondsBuffer } },
+        { binding: 2, resource: { buffer: this.molAnglesBuffer } },
+      ],
+    })
+    const bondedPipelineLayout = d.createPipelineLayout({
+      bindGroupLayouts: [this.computeLayout, this.bondedLayout],
+    })
+
     const make = (kernelSrc: string): GPUComputePipeline =>
       d.createComputePipeline({
         layout: pipelineLayout,
@@ -418,7 +487,13 @@ export class WebGPUBackend implements IGPUBackend {
     this.pipelines = {
       lj: make(ljWgsl),
       coulomb: make(coulombWgsl),
-      bonded: make(bondedWgsl),
+      bonded: d.createComputePipeline({
+        layout: bondedPipelineLayout,
+        compute: {
+          module: d.createShaderModule({ code: commonWgsl + '\n' + bondedWgsl }),
+          entryPoint: 'main',
+        },
+      }),
       integratePos: make(integratePosWgsl),
       integrateVel: make(integrateVelWgsl),
       thermoReduce: make(thermoReduceWgsl),
@@ -485,7 +560,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 0, resource: { buffer: this.cameraBuffer } },
         { binding: 1, resource: { buffer: this.vizUniformBuffer } },
         { binding: 2, resource: { buffer: this.posBuffer } },
-        { binding: 3, resource: { buffer: this.bondPairsBuffer } },
+        { binding: 3, resource: { buffer: this.molBondsBuffer } },
       ],
     })
 
@@ -695,6 +770,7 @@ export class WebGPUBackend implements IGPUBackend {
     pass.setPipeline(this.pipelines.coulomb)
     pass.dispatchWorkgroups(ag)
     if (this.numMol > 0) {
+      pass.setBindGroup(1, this.bondedBindGroup)
       pass.setPipeline(this.pipelines.bonded)
       pass.dispatchWorkgroups(this.molGroups())
     }
@@ -723,6 +799,7 @@ export class WebGPUBackend implements IGPUBackend {
       pass.setPipeline(this.pipelines.coulomb)
       pass.dispatchWorkgroups(ag)
       if (this.numMol > 0) {
+        pass.setBindGroup(1, this.bondedBindGroup)
         pass.setPipeline(this.pipelines.bonded)
         pass.dispatchWorkgroups(mg)
       }
@@ -874,7 +951,9 @@ export class WebGPUBackend implements IGPUBackend {
     this.uniformBuffer?.destroy()
     this.cameraBuffer?.destroy()
     this.vizUniformBuffer?.destroy()
-    this.bondPairsBuffer?.destroy()
+    this.molRangesBuffer?.destroy()
+    this.molBondsBuffer?.destroy()
+    this.molAnglesBuffer?.destroy()
     this.segCountBuffer?.destroy()
     this.segPairsBuffer?.destroy()
     this.cellHeadBuffer?.destroy()

@@ -2,6 +2,7 @@ import { LitElement, css, html } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import {
   DEFAULT_RUNTIME,
+  MATERIAL_CATEGORIES,
   MATERIAL_LIST,
   PRESETS,
   type SimConfig,
@@ -29,6 +30,11 @@ export class ControlPanel extends LitElement {
   @property({ type: Boolean }) running = false
 
   @state() private tab: Tab = 'mixture'
+  @state() private expanded: Record<string, boolean> = {
+    molecules: true,
+    ions: true,
+    atoms: true,
+  }
 
   // Per-material amounts (0 = not included). Seeded from the first preset.
   @state() private amounts: Record<string, number> = seedAmounts()
@@ -87,6 +93,10 @@ export class ControlPanel extends LitElement {
     this.amounts = { ...this.amounts, [key]: Math.max(0, Math.round(v)) }
   }
 
+  private setExpanded(key: string, open: boolean): void {
+    this.expanded = { ...this.expanded, [key]: open }
+  }
+
   private toggleRun(): void {
     this.dispatchEvent(
       new CustomEvent('toggle-run', { bubbles: true, composed: true }),
@@ -119,20 +129,36 @@ export class ControlPanel extends LitElement {
   private renderMixture() {
     return html`
       <div class="group">
-        ${MATERIAL_LIST.map(
-          (m) => html`
-            <number-field
-              label=${m.label}
-              unit=${m.unit}
-              .value=${this.amounts[m.key] ?? 0}
-              min="0"
-              max="4000"
-              step="1"
-              @value-change=${(e: CustomEvent<number>) =>
-                this.setAmount(m.key, e.detail)}
-            ></number-field>
-          `,
-        )}
+        ${MATERIAL_CATEGORIES.map((cat) => {
+          const items = MATERIAL_LIST.filter((m) => m.category === cat.key)
+          if (items.length === 0) return null
+          return html`
+            <details
+              class="section"
+              ?open=${this.expanded[cat.key] ?? true}
+              @toggle=${(e: Event) =>
+                this.setExpanded(cat.key, (e.currentTarget as HTMLDetailsElement).open)}
+            >
+              <summary class="section-label">${cat.label}</summary>
+              <div class="section-body">
+                ${items.map(
+                  (m) => html`
+                    <number-field
+                      label=${m.label}
+                      unit=${m.unit}
+                      .value=${this.amounts[m.key] ?? 0}
+                      min="0"
+                      max="1000"
+                      step="1"
+                      @value-change=${(e: CustomEvent<number>) =>
+                        this.setAmount(m.key, e.detail)}
+                    ></number-field>
+                  `,
+                )}
+              </div>
+            </details>
+          `
+        })}
       </div>
     `
   }
@@ -253,6 +279,33 @@ export class ControlPanel extends LitElement {
       display: flex;
       flex-direction: column;
       gap: var(--space-md);
+    }
+    .section-label {
+      list-style: none;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-text-dim);
+      margin-top: var(--space-sm);
+      padding-bottom: var(--space-xs);
+      border-bottom: 1px solid var(--color-panel-border);
+      cursor: pointer;
+    }
+    .section-label:first-child {
+      margin-top: 0;
+    }
+    .section-label::-webkit-details-marker {
+      display: none;
+    }
+    .section {
+      display: block;
+    }
+    .section-body {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-md);
+      margin-top: var(--space-sm);
     }
     .actions {
       display: flex;

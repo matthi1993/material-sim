@@ -2,9 +2,11 @@ import { LitElement, css, html } from 'lit'
 import { customElement, property, query, state } from 'lit/decorators.js'
 import { MATERIALS, type SimConfig } from '../../sim/params'
 import type { SimStats } from '../../sim/types'
+import type { CameraBasis } from '../renderer'
 import './control-panel'
 import './stats-overlay'
 import './atom-legend'
+import './view-gizmo'
 
 /**
  * Top-level layout host. Renders the canvas plus the floating overlays
@@ -16,6 +18,9 @@ import './atom-legend'
 export class SimApp extends LitElement {
   @property({ attribute: false }) stats: SimStats | null = null
   @property({ type: Boolean }) running = false
+
+  /** Live camera frame source for the orientation gizmo (set by main.ts). */
+  @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
 
   @state() private activeSymbols: string[] = []
 
@@ -59,6 +64,7 @@ export class SimApp extends LitElement {
       <canvas></canvas>
       <control-panel .running=${this.running}></control-panel>
       <stats-overlay .stats=${this.stats}></stats-overlay>
+      <view-gizmo .basisProvider=${this.basisProvider}></view-gizmo>
       <atom-legend .symbols=${this.activeSymbols}></atom-legend>
     `
   }

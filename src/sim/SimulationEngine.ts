@@ -27,6 +27,7 @@ export class SimulationEngine {
   private thermostat: ThermostatManager | null = null
 
   private running = false
+  private loopActive = false
   private rafHandle = 0
 
   private cameraProvider: CameraProvider | null = null
@@ -72,6 +73,7 @@ export class SimulationEngine {
 
     this.temperature = Number.NaN
     this.framesSinceSample = 0
+    this.loopActive = true
     this.running = true
     this.lastFrameTime = performance.now()
     this.loop()
@@ -92,6 +94,7 @@ export class SimulationEngine {
   }
 
   pause(): void {
+    // Pause only stops simulation stepping; rendering continues for camera edits.
     this.running = false
   }
 
@@ -99,7 +102,6 @@ export class SimulationEngine {
     if (this.running || !this.params) return
     this.running = true
     this.lastFrameTime = performance.now()
-    this.loop()
   }
 
   get isRunning(): boolean {
@@ -107,30 +109,32 @@ export class SimulationEngine {
   }
 
   destroy(): void {
+    this.loopActive = false
     this.running = false
     cancelAnimationFrame(this.rafHandle)
     this.backend.destroy()
   }
 
   private loop = (): void => {
-    if (!this.running || !this.runtime) return
+    if (!this.loopActive || !this.runtime) return
 
     const now = performance.now()
     const dt = now - this.lastFrameTime
     this.lastFrameTime = now
-    if (dt > 0) this.fps = 0.9 * this.fps + 0.1 * (1000 / dt)
+    if (this.running && dt > 0) this.fps = 0.9 * this.fps + 0.1 * (1000 / dt)
 
-    // Tick the neighbor-list manager (no-op until a list is enabled).
-    this.neighborList?.shouldRebuild()
+    if (this.running) {
+      // Tick the neighbor-list manager (no-op until a list is enabled).
+      this.neighborList?.shouldRebuild()
 
-    this.backend.stepSimulation(this.runtime.stepsPerFrame)
+      this.backend.stepSimulation(this.runtime.stepsPerFrame)
+      this.maybeSampleTemperature()
+      this.emitStats()
+    }
 
     if (this.cameraProvider) {
       this.backend.render(this.cameraProvider())
     }
-
-    this.maybeSampleTemperature()
-    this.emitStats()
 
     this.rafHandle = requestAnimationFrame(this.loop)
   }

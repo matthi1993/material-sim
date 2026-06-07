@@ -1,138 +1,140 @@
 // Default parameter values and the material/force-field library.
 // Everything here is data. Engine and shaders never hardcode these numbers.
 // Adding a new substance means adding a MaterialDef here — nothing else.
+// Element definitions live in elements.ts; molecule geometry in molecules.ts.
 
+import { ELEMENTS, type ElementDef } from './elements'
+import {
+  CO2_MOL,
+  HYDROGEN_MOL,
+  METHANE_MOL,
+  NITROGEN_MOL,
+  OXYGEN_MOL,
+  WATER_MOL,
+  type MoleculeTemplate,
+} from './molecules'
 import type { RuntimeConfig, Vec3, ViewOptions } from './types'
+
+export { ELEMENTS, type ElementDef } from './elements'
+export type { MoleculeTemplate } from './molecules'
 
 /** Physical constants in the nm / ps / amu / kJ-per-mol unit system. */
 export const KB = 0.00831446261815324 // Boltzmann constant, kJ/mol/K
 export const COULOMB_K = 138.935458 // 1/(4*pi*eps0), kJ*nm/(mol*e^2)
 
-const DEG = Math.PI / 180
 const RMIN = Math.pow(2, 1 / 6) // r_min / sigma for a Lennard-Jones well
 
-/**
- * One chemical element / particle species. The `id` is a global palette index
- * the render shader maps to a color and radius (see render.wgsl). Keep these in
- * sync with the palette there.
- */
-export interface ElementDef {
-  id: number // global palette id (matches render.wgsl)
-  symbol: string
-  mass: number // amu
-  charge: number // e
-  sigma: number // nm (Lennard-Jones)
-  epsilon: number // kJ/mol (Lennard-Jones)
-}
-
-export const ELEMENTS = {
-  O: { id: 0, symbol: 'O', mass: 15.9994, charge: -0.834, sigma: 0.315061, epsilon: 0.636386 },
-  H: { id: 1, symbol: 'H', mass: 1.008, charge: 0.417, sigma: 0.0, epsilon: 0.0 },
-  Na: { id: 2, symbol: 'Na', mass: 22.98977, charge: 1.0, sigma: 0.2584, epsilon: 0.4184 },
-  Cl: { id: 3, symbol: 'Cl', mass: 35.453, charge: -1.0, sigma: 0.4401, epsilon: 0.4184 },
-  Ar: { id: 4, symbol: 'Ar', mass: 39.948, charge: 0.0, sigma: 0.3405, epsilon: 0.996 },
-  Fe: { id: 5, symbol: 'Fe', mass: 55.845, charge: 0.0, sigma: 0.228, epsilon: 25.0 },
-  Cu: { id: 6, symbol: 'Cu', mass: 63.546, charge: 0.0, sigma: 0.234, epsilon: 22.0 },
-  K: { id: 7, symbol: 'K', mass: 39.0983, charge: 1.0, sigma: 0.3334, epsilon: 0.4184 },
-  Br: { id: 8, symbol: 'Br', mass: 79.904, charge: -1.0, sigma: 0.4625, epsilon: 0.4184 },
-  Ne: { id: 9, symbol: 'Ne', mass: 20.1797, charge: 0.0, sigma: 0.2782, epsilon: 0.2966 },
-  Au: { id: 10, symbol: 'Au', mass: 196.9666, charge: 0.0, sigma: 0.2629, epsilon: 22.0 },
-  Ag: { id: 11, symbol: 'Ag', mass: 107.8682, charge: 0.0, sigma: 0.2644, epsilon: 19.0 },
-  Ni: { id: 12, symbol: 'Ni', mass: 58.6934, charge: 0.0, sigma: 0.2282, epsilon: 23.0 },
-} as const satisfies Record<string, ElementDef>
-
-/** Intramolecular terms for the 3-site water layout (O, H, H). */
-export interface WaterTerms {
-  bondR0: number // nm
-  bondK: number // kJ/mol/nm^2
-  angleTheta0: number // rad
-  angleK: number // kJ/mol/rad^2
-  ohDistance: number // nm, geometry for initial placement
-  hohAngle: number // rad, geometry for initial placement
-}
+/** Coarse grouping the UI shows as labeled sections in the mixture list. */
+export type MaterialCategory = 'molecules' | 'ions' | 'atoms'
 
 /**
  * A buildable substance.
- * - `water`:   3-site flexible TIP3P molecules. count = molecules.
- * - `ionic`:   alternating cation/anion lattice. count = formula units (2 ions).
- * - `atomic`:  single-element lattice or fluid. count = atoms.
+ * - `molecule`: bonded molecules built from a MoleculeTemplate. count = molecules.
+ * - `ionic`:    alternating cation/anion. count = formula units (2 ions).
+ * - `atomic`:   single-element lattice or fluid. count = atoms.
  */
-export type MaterialKind = 'water' | 'ionic' | 'atomic'
+export type MaterialKind = 'molecule' | 'ionic' | 'atomic'
 
 export interface MaterialDef {
   key: string
   label: string
   kind: MaterialKind
-  /** water: [O,H] · ionic: [cation, anion] · atomic: [element] */
+  category: MaterialCategory
+  /** molecule: unique elements (legend) · ionic: [cation, anion] · atomic: [element] */
   elements: ElementDef[]
+  /** Present for kind === 'molecule': geometry + intramolecular force field. */
+  molecule?: MoleculeTemplate
   /** Preferred nearest-neighbor spacing used for initial placement (nm). */
   nn: number
   /** Unit noun shown in the UI (e.g. "molecules", "ions", "atoms"). */
   unit: string
-  water?: WaterTerms
 }
 
-/**
- * TIP3P water (flexible variant): rigid O-H / H-O-H constraints are replaced by
- * stiff harmonic terms so no SHAKE/SETTLE solver is needed for the MVP.
- */
+// --- Molecules -------------------------------------------------------------
+
 export const WATER: MaterialDef = {
   key: 'water',
   label: 'Water (H2O)',
-  kind: 'water',
+  kind: 'molecule',
+  category: 'molecules',
   elements: [ELEMENTS.O, ELEMENTS.H],
+  molecule: WATER_MOL,
   nn: 0.31,
   unit: 'molecules',
-  water: {
-    bondR0: 0.09572,
-    bondK: 200000,
-    angleTheta0: 104.52 * DEG,
-    angleK: 460,
-    ohDistance: 0.09572,
-    hohAngle: 104.52 * DEG,
-  },
 }
+
+export const OXYGEN: MaterialDef = {
+  key: 'oxygen',
+  label: 'Oxygen (O2)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.O],
+  molecule: OXYGEN_MOL,
+  nn: 0.33,
+  unit: 'molecules',
+}
+
+export const HYDROGEN: MaterialDef = {
+  key: 'hydrogen',
+  label: 'Hydrogen (H2)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.H],
+  molecule: HYDROGEN_MOL,
+  nn: 0.3,
+  unit: 'molecules',
+}
+
+export const NITROGEN: MaterialDef = {
+  key: 'nitrogen',
+  label: 'Nitrogen (N2)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.N],
+  molecule: NITROGEN_MOL,
+  nn: 0.34,
+  unit: 'molecules',
+}
+
+export const CARBON_DIOXIDE: MaterialDef = {
+  key: 'co2',
+  label: 'Carbon dioxide (CO2)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.C, ELEMENTS.O],
+  molecule: CO2_MOL,
+  nn: 0.45,
+  unit: 'molecules',
+}
+
+export const METHANE: MaterialDef = {
+  key: 'methane',
+  label: 'Methane (CH4)',
+  kind: 'molecule',
+  category: 'molecules',
+  elements: [ELEMENTS.C, ELEMENTS.H],
+  molecule: METHANE_MOL,
+  nn: 0.42,
+  unit: 'molecules',
+}
+
+// --- Ions ------------------------------------------------------------------
 
 export const SALT: MaterialDef = {
   key: 'salt',
   label: 'Salt (NaCl)',
   kind: 'ionic',
+  category: 'ions',
   elements: [ELEMENTS.Na, ELEMENTS.Cl],
   nn: 0.3, // Na-Cl spacing pulled in by electrostatics, not the LJ minimum
   unit: 'formula units',
-}
-
-export const ARGON: MaterialDef = {
-  key: 'argon',
-  label: 'Argon (Ar)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Ar],
-  nn: ELEMENTS.Ar.sigma * RMIN,
-  unit: 'atoms',
-}
-
-export const IRON: MaterialDef = {
-  key: 'iron',
-  label: 'Iron (Fe)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Fe],
-  nn: ELEMENTS.Fe.sigma * RMIN,
-  unit: 'atoms',
-}
-
-export const COPPER: MaterialDef = {
-  key: 'copper',
-  label: 'Copper (Cu)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Cu],
-  nn: ELEMENTS.Cu.sigma * RMIN,
-  unit: 'atoms',
 }
 
 export const POTASSIUM_CHLORIDE: MaterialDef = {
   key: 'kcl',
   label: 'Potassium chloride (KCl)',
   kind: 'ionic',
+  category: 'ions',
   elements: [ELEMENTS.K, ELEMENTS.Cl],
   nn: 0.31,
   unit: 'formula units',
@@ -142,50 +144,42 @@ export const POTASSIUM_BROMIDE: MaterialDef = {
   key: 'kbr',
   label: 'Potassium bromide (KBr)',
   kind: 'ionic',
+  category: 'ions',
   elements: [ELEMENTS.K, ELEMENTS.Br],
   nn: 0.33,
   unit: 'formula units',
 }
 
-export const NEON: MaterialDef = {
-  key: 'neon',
-  label: 'Neon (Ne)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Ne],
-  nn: ELEMENTS.Ne.sigma * RMIN,
-  unit: 'atoms',
+// --- Atoms & metals --------------------------------------------------------
+
+function atomic(key: string, label: string, el: ElementDef): MaterialDef {
+  return {
+    key,
+    label,
+    kind: 'atomic',
+    category: 'atoms',
+    elements: [el],
+    nn: el.sigma * RMIN,
+    unit: 'atoms',
+  }
 }
 
-export const GOLD: MaterialDef = {
-  key: 'gold',
-  label: 'Gold (Au)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Au],
-  nn: ELEMENTS.Au.sigma * RMIN,
-  unit: 'atoms',
-}
-
-export const SILVER: MaterialDef = {
-  key: 'silver',
-  label: 'Silver (Ag)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Ag],
-  nn: ELEMENTS.Ag.sigma * RMIN,
-  unit: 'atoms',
-}
-
-export const NICKEL: MaterialDef = {
-  key: 'nickel',
-  label: 'Nickel (Ni)',
-  kind: 'atomic',
-  elements: [ELEMENTS.Ni],
-  nn: ELEMENTS.Ni.sigma * RMIN,
-  unit: 'atoms',
-}
+export const ARGON = atomic('argon', 'Argon (Ar)', ELEMENTS.Ar)
+export const NEON = atomic('neon', 'Neon (Ne)', ELEMENTS.Ne)
+export const IRON = atomic('iron', 'Iron (Fe)', ELEMENTS.Fe)
+export const COPPER = atomic('copper', 'Copper (Cu)', ELEMENTS.Cu)
+export const GOLD = atomic('gold', 'Gold (Au)', ELEMENTS.Au)
+export const SILVER = atomic('silver', 'Silver (Ag)', ELEMENTS.Ag)
+export const NICKEL = atomic('nickel', 'Nickel (Ni)', ELEMENTS.Ni)
 
 /** Registry of every substance the UI can build and mix. */
 export const MATERIALS: Record<string, MaterialDef> = {
   water: WATER,
+  oxygen: OXYGEN,
+  hydrogen: HYDROGEN,
+  nitrogen: NITROGEN,
+  co2: CARBON_DIOXIDE,
+  methane: METHANE,
   salt: SALT,
   kcl: POTASSIUM_CHLORIDE,
   kbr: POTASSIUM_BROMIDE,
@@ -200,6 +194,11 @@ export const MATERIALS: Record<string, MaterialDef> = {
 
 export const MATERIAL_LIST: MaterialDef[] = [
   WATER,
+  OXYGEN,
+  HYDROGEN,
+  NITROGEN,
+  CARBON_DIOXIDE,
+  METHANE,
   SALT,
   POTASSIUM_CHLORIDE,
   POTASSIUM_BROMIDE,
@@ -210,6 +209,13 @@ export const MATERIAL_LIST: MaterialDef[] = [
   GOLD,
   SILVER,
   NICKEL,
+]
+
+/** Mixture-list section order and labels for the UI. */
+export const MATERIAL_CATEGORIES: { key: MaterialCategory; label: string }[] = [
+  { key: 'molecules', label: 'Molecules' },
+  { key: 'ions', label: 'Ions' },
+  { key: 'atoms', label: 'Atoms & metals' },
 ]
 
 /** One substance plus how much of it to place. */
@@ -286,6 +292,64 @@ export const PRESETS: Preset[] = [
       cutoffRadius: 0.9,
       dt: 0.0005,
       temperature: 310,
+    },
+  },
+  {
+    key: 'oxygen',
+    label: 'Oxygen gas',
+    config: {
+      components: [{ materialKey: 'oxygen', count: 160 }],
+      box: [4.0, 4.0, 4.0],
+      cutoffRadius: 1.0,
+      dt: 0.0005,
+      temperature: 200,
+    },
+  },
+  {
+    key: 'hydrogen',
+    label: 'Hydrogen gas',
+    config: {
+      components: [{ materialKey: 'hydrogen', count: 200 }],
+      box: [4.0, 4.0, 4.0],
+      cutoffRadius: 1.0,
+      dt: 0.0004,
+      temperature: 120,
+    },
+  },
+  {
+    key: 'air',
+    label: 'Air (N2 + O2)',
+    config: {
+      components: [
+        { materialKey: 'nitrogen', count: 150 },
+        { materialKey: 'oxygen', count: 40 },
+      ],
+      box: [4.5, 4.5, 4.5],
+      cutoffRadius: 1.0,
+      dt: 0.0005,
+      temperature: 220,
+    },
+  },
+  {
+    key: 'co2',
+    label: 'Carbon dioxide',
+    config: {
+      components: [{ materialKey: 'co2', count: 130 }],
+      box: [4.0, 4.0, 4.0],
+      cutoffRadius: 1.1,
+      dt: 0.0005,
+      temperature: 250,
+    },
+  },
+  {
+    key: 'methane',
+    label: 'Methane',
+    config: {
+      components: [{ materialKey: 'methane', count: 130 }],
+      box: [4.0, 4.0, 4.0],
+      cutoffRadius: 1.1,
+      dt: 0.0004,
+      temperature: 150,
     },
   },
   {

@@ -25,10 +25,15 @@ struct Viz {
   lineOpacity   : f32, // master force/bond line opacity (0..1)
 };
 
+struct MolBond {
+  ij  : vec2<u32>,
+  par : vec2<f32>, // r0, k
+};
+
 @group(0) @binding(0) var<uniform> cam: Camera;
 @group(0) @binding(1) var<uniform> viz: Viz;
 @group(0) @binding(2) var<storage, read> pos: array<vec4<f32>>;
-@group(0) @binding(3) var<storage, read> bondPairs: array<u32>;
+@group(0) @binding(3) var<storage, read> bonds: array<MolBond>;
 
 fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
   return d - box * round(d / box);
@@ -45,15 +50,18 @@ fn vs(
   @builtin(vertex_index) vi: u32,
   @builtin(instance_index) ii: u32,
 ) -> VSOut {
-  let ia = bondPairs[ii * 2u];
-  let ib = bondPairs[ii * 2u + 1u];
+  let bond = bonds[ii];
+  let ia = bond.ij.x;
+  let ib = bond.ij.y;
+  let r0 = bond.par.x;
+  let kb = bond.par.y;
 
   let a = pos[ia].xyz;
   let b = a + minImage(pos[ib].xyz - a, viz.box);
 
   // Bond stretch force magnitude k*|r - r0|, faded like the attraction overlay.
   let r = length(b - a);
-  let fmag = viz.bondK * abs(r - viz.bondR0);
+  let fmag = kb * abs(r - r0);
   let alpha = clamp((fmag - viz.bondThresh) / (viz.bondThresh * 1.5), 0.2, 1.0);
 
   let world = select(b, a, vi == 0u);

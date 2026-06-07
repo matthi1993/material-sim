@@ -4,7 +4,7 @@
 import './ui/components/sim-app'
 import { WebGPUBackend } from './sim/backend/WebGPUBackend'
 import { SimulationEngine } from './sim/SimulationEngine'
-import { Renderer } from './ui/renderer'
+import { Renderer, type AxisKey, type ProjectionMode } from './ui/renderer'
 import { buildSystem } from './sim/topology'
 import { DEFAULT_RUNTIME, DEFAULT_VIEW, type SimConfig } from './sim/params'
 import type { ViewOptions } from './sim/types'
@@ -17,6 +17,10 @@ let renderer: Renderer | null = null
 let restarting = false
 let currentRuntime = { ...DEFAULT_RUNTIME }
 let currentView: ViewOptions = { ...DEFAULT_VIEW }
+let currentProjection: ProjectionMode = 'orthographic'
+
+// Let the orientation gizmo read the live camera frame each frame.
+app.basisProvider = () => renderer?.getBasis() ?? null
 
 async function restart(config: SimConfig): Promise<void> {
   if (restarting) return
@@ -29,6 +33,7 @@ async function restart(config: SimConfig): Promise<void> {
 
     renderer = new Renderer(canvas)
     renderer.frameBox(config.box)
+    renderer.setProjection(currentProjection)
 
     const backend = new WebGPUBackend(canvas)
     engine = new SimulationEngine(backend)
@@ -69,6 +74,15 @@ app.addEventListener('runtime-change', (e) => {
 app.addEventListener('view-change', (e) => {
   currentView = { ...currentView, ...(e as CustomEvent<Partial<ViewOptions>>).detail }
   engine?.setViewOptions(currentView)
+})
+
+app.addEventListener('camera-axis', (e) => {
+  renderer?.snapToAxis((e as CustomEvent<AxisKey>).detail)
+})
+
+app.addEventListener('projection-change', (e) => {
+  currentProjection = (e as CustomEvent<ProjectionMode>).detail
+  renderer?.setProjection(currentProjection)
 })
 
 app.addEventListener('toggle-run', () => {

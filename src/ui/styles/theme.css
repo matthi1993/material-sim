@@ -14,6 +14,8 @@
   /* Element legend colors — mirror the palette in render.wgsl (elementStyle). */
   --el-o: #e83b2b;
   --el-h: #edeff7;
+  --el-c: #6f7480;
+  --el-n: #4a6cff;
   --el-na: #ab66f2;
   --el-cl: #5cd973;
   --el-ar: #73ebf2;
@@ -25,6 +27,12 @@
   --el-au: #ffd123;
   --el-ag: #c7ccd6;
   --el-ni: #75a08c;
+
+  /* Orientation gizmo axis colors. */
+  --axis-x: #ff5a63;
+  --axis-y: #5cd97a;
+  --axis-z: #4c8dff;
+  --axis-cube: #8b90a0;
 
   --space-xs: 4px;
   --space-sm: 8px;
