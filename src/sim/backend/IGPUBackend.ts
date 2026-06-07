@@ -5,6 +5,7 @@
 import type {
   CameraView,
   InitialState,
+  RuntimeConfig,
   SimParams,
   Topology,
   ViewOptions,
@@ -16,6 +17,7 @@ export interface IGPUBackend {
     params: SimParams,
     topology: Topology,
     initial: InitialState,
+    runtime: RuntimeConfig,
   ): Promise<void>
 
   /** Advance the simulation by `steps` full timesteps. Fire-and-forget. */
@@ -23,6 +25,9 @@ export interface IGPUBackend {
 
   /** Hot-swappable thermostat control (target temperature, on/off). */
   setThermostat(targetTemperature: number, enabled: boolean): void
+
+  /** Hot-swappable boundary handling for wrapping vs open space. */
+  setBoundaryMode(mode: RuntimeConfig['boundaryMode']): void
 
   /** Live display controls (atom size, line opacity, overlay toggles). */
   setViewOptions(options: ViewOptions): void

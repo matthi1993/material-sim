@@ -37,6 +37,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let b = molBonds[bondStart + bi];
     let i = b.ij.x;
     let j = b.ij.y;
+    if (vel[i].w <= 0.0 || vel[j].w <= 0.0) { continue; }
     let r0 = b.par.x;
     let kb = b.par.y;
 
@@ -55,6 +56,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = an.idx.x;
     let jc = an.idx.y;
     let kk = an.idx.z;
+    if (vel[i].w <= 0.0 || vel[jc].w <= 0.0 || vel[kk].w <= 0.0) { continue; }
     let theta0 = an.par.x;
     let ka = an.par.y;
 

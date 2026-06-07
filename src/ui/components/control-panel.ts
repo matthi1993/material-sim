@@ -1,12 +1,12 @@
 import { LitElement, css, html } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import {
-  DEFAULT_RUNTIME,
   MATERIAL_CATEGORIES,
   MATERIAL_LIST,
   PRESETS,
   type SimConfig,
 } from '../../sim/params'
+import type { BoundaryMode, RuntimeConfig } from '../../sim/types'
 import './number-field'
 import './preset-bar'
 import './view-controls'
@@ -21,13 +21,15 @@ const TABS: { key: Tab; label: string }[] = [
 
 /**
  * Left control panel. Owns the form state for a run and fires events only —
- * never touches the backend or sim state. Emits `config-change` (restart),
- * `toggle-run` and `runtime-change` (live speed). Live display options come
- * from the embedded <view-controls>, which emits `view-change` directly.
+ * never touches the backend or sim state. Emits `config-change` (restart)
+ * and `toggle-run`. Live runtime controls live in the stats overlay; display
+ * options come from the embedded <view-controls>, which emits `view-change`
+ * directly.
  */
 @customElement('control-panel')
 export class ControlPanel extends LitElement {
   @property({ type: Boolean }) running = false
+  @property() boundaryMode: BoundaryMode = 'periodic'
 
   @state() private tab: Tab = 'mixture'
   @state() private expanded: Record<string, boolean> = {
@@ -44,7 +46,6 @@ export class ControlPanel extends LitElement {
   @state() private temp = PRESETS[0].config.temperature
   @state() private cutoff = PRESETS[0].config.cutoffRadius
   @state() private dtFs = PRESETS[0].config.dt * 1000 // fs in the UI
-  @state() private speed = DEFAULT_RUNTIME.stepsPerFrame
 
   private buildConfig(): SimConfig {
     const components = MATERIAL_LIST.filter(
@@ -103,12 +104,10 @@ export class ControlPanel extends LitElement {
     )
   }
 
-  /** Live simulation speed — applies without restarting the system. */
-  private setSpeed(v: number): void {
-    this.speed = Math.max(1, Math.round(v))
+  private setRuntime(patch: Partial<RuntimeConfig>): void {
     this.dispatchEvent(
-      new CustomEvent('runtime-change', {
-        detail: { stepsPerFrame: this.speed },
+      new CustomEvent<Partial<RuntimeConfig>>('runtime-change', {
+        detail: patch,
         bubbles: true,
         composed: true,
       }),
@@ -178,9 +177,26 @@ export class ControlPanel extends LitElement {
           @value-change=${(e: CustomEvent<number>) => (this.temp = e.detail)}></number-field>
         <number-field label="Timestep" unit="fs" .value=${this.dtFs} min="0.05" max="5.0" step="0.05"
           @value-change=${(e: CustomEvent<number>) => (this.dtFs = e.detail)}></number-field>
-        <number-field label="Speed" unit="steps/frame" .value=${this.speed} min="1" max="64" step="1"
-          @value-change=${(e: CustomEvent<number>) => this.setSpeed(e.detail)}></number-field>
+        <div class="boundary-group">
+          <span class="boundary-label">Boundary</span>
+          <div class="boundary-options">
+            ${this.boundaryButton('periodic', 'Periodic')}
+            ${this.boundaryButton('open', 'Open')}
+            ${this.boundaryButton('open-top', 'Open Top')}
+          </div>
+        </div>
       </div>
+    `
+  }
+
+  private boundaryButton(mode: BoundaryMode, label: string) {
+    return html`
+      <button
+        class="boundary-option ${this.boundaryMode === mode ? 'active' : ''}"
+        @click=${() => this.setRuntime({ boundaryMode: mode })}
+      >
+        ${label}
+      </button>
     `
   }
 
@@ -273,6 +289,39 @@ export class ControlPanel extends LitElement {
       border-bottom-color: var(--color-accent);
     }
     .tab:hover {
+      color: var(--color-text);
+    }
+    .boundary-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+    .boundary-label {
+      color: var(--color-text-dim);
+      font-size: 0.8rem;
+    }
+    .boundary-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--space-xs);
+    }
+    .boundary-option {
+      padding: var(--space-sm) var(--space-xs);
+      border: 1px solid var(--color-panel-border);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--color-panel) 85%, transparent);
+      color: var(--color-text-dim);
+      font: inherit;
+      font-size: 0.74rem;
+      cursor: pointer;
+    }
+    .boundary-option.active {
+      color: var(--color-text);
+      border-color: var(--color-accent);
+      background: var(--color-accent-dim);
+    }
+    .boundary-option:hover {
+      border-color: var(--color-accent);
       color: var(--color-text);
     }
     .group {

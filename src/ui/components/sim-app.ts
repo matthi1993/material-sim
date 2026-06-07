@@ -1,7 +1,7 @@
 import { LitElement, css, html } from 'lit'
 import { customElement, property, query, state } from 'lit/decorators.js'
-import { MATERIALS, type SimConfig } from '../../sim/params'
-import type { SimStats } from '../../sim/types'
+import { DEFAULT_RUNTIME, MATERIALS, type SimConfig } from '../../sim/params'
+import type { BoundaryMode, SimStats } from '../../sim/types'
 import type { CameraBasis } from '../renderer'
 import './control-panel'
 import './stats-overlay'
@@ -18,6 +18,8 @@ import './view-gizmo'
 export class SimApp extends LitElement {
   @property({ attribute: false }) stats: SimStats | null = null
   @property({ type: Boolean }) running = false
+  @property({ type: Number }) stepsPerFrame = DEFAULT_RUNTIME.stepsPerFrame
+  @property() boundaryMode: BoundaryMode = DEFAULT_RUNTIME.boundaryMode
 
   /** Live camera frame source for the orientation gizmo (set by main.ts). */
   @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
@@ -62,9 +64,14 @@ export class SimApp extends LitElement {
   render() {
     return html`
       <canvas></canvas>
-      <control-panel .running=${this.running}></control-panel>
-      <stats-overlay .stats=${this.stats}></stats-overlay>
-      <view-gizmo .basisProvider=${this.basisProvider}></view-gizmo>
+      <control-panel .running=${this.running} .boundaryMode=${this.boundaryMode}></control-panel>
+      <div class="right-stack">
+        <stats-overlay
+          .stats=${this.stats}
+          .stepsPerFrame=${this.stepsPerFrame}
+        ></stats-overlay>
+        <view-gizmo .basisProvider=${this.basisProvider}></view-gizmo>
+      </div>
       <atom-legend .symbols=${this.activeSymbols}></atom-legend>
     `
   }
@@ -85,6 +92,16 @@ export class SimApp extends LitElement {
       height: 100%;
       display: block;
       touch-action: none;
+    }
+    .right-stack {
+      position: absolute;
+      top: var(--space-md);
+      right: var(--space-md);
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: var(--space-md);
     }
   `
 }

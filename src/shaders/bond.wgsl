@@ -23,6 +23,7 @@ struct Viz {
   bondR0        : f32,
   bondK         : f32,
   lineOpacity   : f32, // master force/bond line opacity (0..1)
+  boundaryMode  : u32, // 0 = periodic, 1 = open, 2 = open-top
 };
 
 struct MolBond {
@@ -34,8 +35,17 @@ struct MolBond {
 @group(0) @binding(1) var<uniform> viz: Viz;
 @group(0) @binding(2) var<storage, read> pos: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> bonds: array<MolBond>;
+@group(0) @binding(4) var<storage, read> vel: array<vec4<f32>>;
 
 fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
+  if (viz.boundaryMode == 1u) { return d; }
+  if (viz.boundaryMode == 2u) {
+    return vec3<f32>(
+      d.x - box.x * round(d.x / box.x),
+      d.y,
+      d.z - box.z * round(d.z / box.z),
+    );
+  }
   return d - box * round(d / box);
 }
 
@@ -53,6 +63,13 @@ fn vs(
   let bond = bonds[ii];
   let ia = bond.ij.x;
   let ib = bond.ij.y;
+  if (vel[ia].w <= 0.0 || vel[ib].w <= 0.0) {
+    var dead: VSOut;
+    dead.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    dead.color = vec3<f32>(0.0);
+    dead.alpha = 0.0;
+    return dead;
+  }
   let r0 = bond.par.x;
   let kb = bond.par.y;
 

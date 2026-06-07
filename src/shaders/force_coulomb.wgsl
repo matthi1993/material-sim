@@ -6,6 +6,7 @@
 // Coulomb force of atom i toward atom j. Returns zero for the same molecule,
 // an uncharged partner, the same atom, or a pair beyond the cutoff.
 fn coulombPair(pi: vec3<f32>, qi: f32, molI: f32, j: u32) -> vec3<f32> {
+  if (vel[j].w <= 0.0) { return vec3<f32>(0.0); }
   if (atomParams[j].z == molI) { return vec3<f32>(0.0); } // exclude intramolecular
   let qj = pos[j].w;
   if (qj == 0.0) { return vec3<f32>(0.0); }
@@ -24,6 +25,7 @@ fn coulombPair(pi: vec3<f32>, qi: f32, molI: f32, j: u32) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.numAtoms) { return; }
+  if (vel[i].w <= 0.0) { return; }
 
   let pi = pos[i].xyz;
   let qi = pos[i].w;

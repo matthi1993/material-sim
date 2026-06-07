@@ -22,11 +22,12 @@ struct Uniforms {
   cellCap  : u32,       // max atoms stored per cell
   cellSize : vec3<f32>, // cell edge lengths (nm), >= cutoff per axis
   useCells : u32,       // 1 = use the cell list, 0 = brute-force O(N^2)
+  boundaryMode : u32,   // 0 = periodic, 1 = open, 2 = open-top
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<storage, read_write> pos: array<vec4<f32>>;        // xyz, charge
-@group(0) @binding(2) var<storage, read>        atomParams: array<vec4<f32>>; // sigma, epsilon, molId, elementId
+@group(0) @binding(2) var<storage, read_write>  atomParams: array<vec4<f32>>; // sigma, epsilon, molId, elementId
 @group(0) @binding(3) var<storage, read_write> force: array<vec4<f32>>;      // xyz, _
 @group(0) @binding(4) var<storage, read_write> vel: array<vec4<f32>>;        // xyz, mass
 @group(0) @binding(5) var<storage, read_write> reduction: array<f32>;        // scratch (e.g. 2*KE)
@@ -34,6 +35,14 @@ struct Uniforms {
 @group(0) @binding(7) var<storage, read_write> cellAtoms: array<u32>;        // atom ids, cellCap per cell
 
 fn minImage(d: vec3<f32>) -> vec3<f32> {
+  if (u.boundaryMode == 1u) { return d; }
+  if (u.boundaryMode == 2u) {
+    return vec3<f32>(
+      d.x - u.box.x * round(d.x / u.box.x),
+      d.y,
+      d.z - u.box.z * round(d.z / u.box.z),
+    );
+  }
   return d - u.box * round(d / u.box);
 }
 

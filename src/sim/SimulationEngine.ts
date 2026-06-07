@@ -41,6 +41,7 @@ export class SimulationEngine {
   private framesSinceSample = 0
   private temperature = Number.NaN
   private sampling = false
+  private simulatedTimePs = 0
 
   constructor(backend: IGPUBackend) {
     this.backend = backend
@@ -65,14 +66,16 @@ export class SimulationEngine {
     this.neighborList = new NeighborListManager(params)
     this.thermostat = new ThermostatManager(runtime)
 
-    await this.backend.initialize(params, topology, initial)
+    await this.backend.initialize(params, topology, initial, runtime)
     this.backend.setThermostat(
       runtime.targetTemperature,
       runtime.thermostatEnabled,
     )
+    this.backend.setBoundaryMode(runtime.boundaryMode)
 
     this.temperature = Number.NaN
     this.framesSinceSample = 0
+    this.simulatedTimePs = 0
     this.loopActive = true
     this.running = true
     this.lastFrameTime = performance.now()
@@ -86,6 +89,7 @@ export class SimulationEngine {
       runtime.targetTemperature,
       runtime.thermostatEnabled,
     )
+    this.backend.setBoundaryMode(runtime.boundaryMode)
   }
 
   /** Apply live display options (atom size, line opacity, overlay toggles). */
@@ -128,6 +132,7 @@ export class SimulationEngine {
       this.neighborList?.shouldRebuild()
 
       this.backend.stepSimulation(this.runtime.stepsPerFrame)
+      this.simulatedTimePs += this.runtime.stepsPerFrame * this.params!.dt
       this.maybeSampleTemperature()
       this.emitStats()
     }
@@ -161,6 +166,7 @@ export class SimulationEngine {
       fps: this.fps,
       numAtoms: this.params.numAtoms,
       temperature: this.temperature,
+      simulatedTimePs: this.simulatedTimePs,
     })
   }
 }

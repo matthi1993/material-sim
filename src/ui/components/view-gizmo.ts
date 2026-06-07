@@ -234,12 +234,6 @@ export class ViewGizmo extends LitElement {
   }
 
   static styles = css`
-    :host {
-      position: absolute;
-      top: calc(var(--space-md) + 52px);
-      right: var(--space-md);
-      z-index: 2;
-    }
     .gizmo {
       display: flex;
       flex-direction: column;

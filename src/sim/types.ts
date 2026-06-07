@@ -3,6 +3,8 @@
 
 export type Vec3 = [number, number, number]
 
+export type BoundaryMode = 'periodic' | 'open' | 'open-top'
+
 /**
  * Immutable during a run. To change: pause -> destroy -> reinit.
  */
@@ -22,6 +24,7 @@ export interface RuntimeConfig {
   targetTemperature: number // K
   thermostatEnabled: boolean
   stepsPerFrame: number
+  boundaryMode: BoundaryMode
 }
 
 /**
@@ -111,4 +114,5 @@ export interface SimStats {
   fps: number
   numAtoms: number
   temperature: number // K (measured, may be NaN before first sample)
+  simulatedTimePs: number // cumulative simulated time since start (ps)
 }

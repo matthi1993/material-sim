@@ -19,6 +19,9 @@ let currentRuntime = { ...DEFAULT_RUNTIME }
 let currentView: ViewOptions = { ...DEFAULT_VIEW }
 let currentProjection: ProjectionMode = 'orthographic'
 
+app.stepsPerFrame = currentRuntime.stepsPerFrame
+app.boundaryMode = currentRuntime.boundaryMode
+
 // Let the orientation gizmo read the live camera frame each frame.
 app.basisProvider = () => renderer?.getBasis() ?? null
 
@@ -49,6 +52,8 @@ async function restart(config: SimConfig): Promise<void> {
       targetTemperature: config.temperature,
     }
     currentRuntime = runtime
+    app.stepsPerFrame = currentRuntime.stepsPerFrame
+    app.boundaryMode = currentRuntime.boundaryMode
 
     await engine.start(params, topology, initial, runtime)
     engine.setViewOptions(currentView)
@@ -66,8 +71,10 @@ app.addEventListener('config-change', (e) => {
 })
 
 app.addEventListener('runtime-change', (e) => {
-  const { stepsPerFrame } = (e as CustomEvent<{ stepsPerFrame: number }>).detail
-  currentRuntime = { ...currentRuntime, stepsPerFrame }
+  const patch = (e as CustomEvent<Partial<typeof currentRuntime>>).detail
+  currentRuntime = { ...currentRuntime, ...patch }
+  app.stepsPerFrame = currentRuntime.stepsPerFrame
+  app.boundaryMode = currentRuntime.boundaryMode
   engine?.setRuntime(currentRuntime)
 })
 

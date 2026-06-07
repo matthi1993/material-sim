@@ -22,18 +22,28 @@ struct Viz {
   bondR0        : f32,
   bondK         : f32,
   lineOpacity   : f32, // master force/bond line opacity (0..1)
+  boundaryMode  : u32, // 0 = periodic, 1 = open, 2 = open-top
 };
 
 @group(0) @binding(0) var<uniform> viz: Viz;
 @group(0) @binding(1) var<storage, read> pos: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> atomParams: array<vec4<f32>>;
-@group(0) @binding(3) var<storage, read_write> segCount: atomic<u32>;
-@group(0) @binding(4) var<storage, read_write> segPairs: array<u32>;
+@group(0) @binding(3) var<storage, read> vel: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read_write> segCount: atomic<u32>;
+@group(0) @binding(5) var<storage, read_write> segPairs: array<u32>;
 
 const KIND_COULOMB : u32 = 0u;
 const KIND_LJ      : u32 = 1u;
 
 fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
+  if (viz.boundaryMode == 1u) { return d; }
+  if (viz.boundaryMode == 2u) {
+    return vec3<f32>(
+      d.x - box.x * round(d.x / box.x),
+      d.y,
+      d.z - box.z * round(d.z / box.z),
+    );
+  }
   return d - box * round(d / box);
 }
 
@@ -56,6 +66,7 @@ fn fade(fmag: f32, threshold: f32) -> f32 {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= viz.numAtoms) { return; }
+  if (vel[i].w <= 0.0) { return; }
 
   let pi   = pos[i].xyz;
   let qi   = pos[i].w;
@@ -64,6 +75,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let epsI = atomParams[i].y;
 
   for (var j: u32 = 0u; j < viz.numAtoms; j = j + 1u) {
+    if (vel[j].w <= 0.0) { continue; }
     if (atomParams[j].z == molI) { continue; } // skip same molecule
 
     let d = minImage(pi - pos[j].xyz, viz.box);

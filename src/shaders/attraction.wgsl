@@ -23,6 +23,7 @@ struct Viz {
   bondR0        : f32,
   bondK         : f32,
   lineOpacity   : f32, // master force/bond line opacity (0..1)
+  boundaryMode  : u32, // 0 = periodic, 1 = open, 2 = open-top
 };
 
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -30,8 +31,17 @@ struct Viz {
 @group(0) @binding(2) var<storage, read> pos: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read> segCount: array<u32>;
 @group(0) @binding(4) var<storage, read> segPairs: array<u32>;
+@group(0) @binding(5) var<storage, read> vel: array<vec4<f32>>;
 
 fn minImage(d: vec3<f32>, box: vec3<f32>) -> vec3<f32> {
+  if (viz.boundaryMode == 1u) { return d; }
+  if (viz.boundaryMode == 2u) {
+    return vec3<f32>(
+      d.x - box.x * round(d.x / box.x),
+      d.y,
+      d.z - box.z * round(d.z / box.z),
+    );
+  }
   return d - box * round(d / box);
 }
 
@@ -65,6 +75,11 @@ fn vs(
 
   let ia = segPairs[ii * 4u];
   let ib = segPairs[ii * 4u + 1u];
+  if (vel[ia].w <= 0.0 || vel[ib].w <= 0.0) {
+    out.clip = vec4<f32>(10.0, 10.0, 10.0, 1.0);
+    out.alpha = 0.0;
+    return out;
+  }
   out.alpha = bitcast<f32>(segPairs[ii * 4u + 2u]) * viz.lineOpacity;
   out.color = kindColor(segPairs[ii * 4u + 3u]);
   let a = pos[ia].xyz;

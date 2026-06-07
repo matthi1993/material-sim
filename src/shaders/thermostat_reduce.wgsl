@@ -14,7 +14,9 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
     if (i >= u.numAtoms) { break; }
     let v = vel[i].xyz;
     let m = vel[i].w;
-    sum = sum + m * dot(v, v);
+    if (m > 0.0) {
+      sum = sum + m * dot(v, v);
+    }
     i = i + 256u;
   }
   partial[t] = sum;

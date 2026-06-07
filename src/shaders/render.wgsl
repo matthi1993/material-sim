@@ -11,6 +11,7 @@ struct Camera {
 @group(0) @binding(0) var<uniform> cam: Camera;
 @group(0) @binding(1) var<storage, read> pos: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> atomParams: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read> vel: array<vec4<f32>>;
 
 struct VSOut {
   @builtin(position) clip  : vec4<f32>,
@@ -57,6 +58,14 @@ fn vs(
     vec2<f32>(-1.0,  1.0),
   );
   let o = offs[vi];
+
+  if (vel[ii].w <= 0.0) {
+    var dead: VSOut;
+    dead.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    dead.uv = vec2<f32>(0.0);
+    dead.color = vec3<f32>(0.0);
+    return dead;
+  }
 
   let center = pos[ii].xyz;
   let style = elementStyle(atomParams[ii].w);

@@ -451,6 +451,7 @@ export const DEFAULT_RUNTIME: RuntimeConfig = {
   targetTemperature: 300,
   thermostatEnabled: true,
   stepsPerFrame: 8,
+  boundaryMode: 'periodic',
 }
 
 /** Default live display options. */

@@ -7,6 +7,7 @@
 // Returns zero for the same molecule, a partner without an LJ site, the same
 // atom (r2 ~ 0), or a pair beyond the cutoff.
 fn ljPair(pi: vec3<f32>, sigI: f32, epsI: f32, molI: f32, j: u32) -> vec3<f32> {
+  if (vel[j].w <= 0.0) { return vec3<f32>(0.0); }
   let apj = atomParams[j];
   if (apj.z == molI) { return vec3<f32>(0.0); } // exclude intramolecular
   if (apj.y <= 0.0) { return vec3<f32>(0.0); }   // partner has no LJ site
@@ -30,6 +31,10 @@ fn ljPair(pi: vec3<f32>, sigI: f32, epsI: f32, molI: f32, j: u32) -> vec3<f32> {
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.numAtoms) { return; }
+  if (vel[i].w <= 0.0) {
+    force[i] = vec4<f32>(0.0);
+    return;
+  }
 
   let pi = pos[i].xyz;
   let api = atomParams[i];

@@ -7,6 +7,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= u.numAtoms) { return; }
 
   let mass = vel[i].w;
+  if (mass <= 0.0) {
+    force[i] = vec4<f32>(0.0);
+    return;
+  }
   let invm = select(0.0, 1.0 / mass, mass > 0.0);
 
   let v = vel[i].xyz + (0.5 * u.dt * invm) * force[i].xyz;

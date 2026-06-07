@@ -10,6 +10,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.numAtoms) { return; }
   if (u.thermoOn == 0u) { return; }
+  if (vel[i].w <= 0.0) { return; }
 
   let ke2 = reduction[0]; // sum m*v^2 = 2*KE
   let ndof = f32(3u * u.numAtoms - 3u);

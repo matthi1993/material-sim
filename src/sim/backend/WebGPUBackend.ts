@@ -4,8 +4,11 @@
 
 import type { IGPUBackend } from './IGPUBackend'
 import type {
+  Bond,
+  BoundaryMode,
   CameraView,
   InitialState,
+  RuntimeConfig,
   SimParams,
   Topology,
   ViewOptions,
@@ -17,6 +20,7 @@ import coulombWgsl from '../../shaders/force_coulomb.wgsl?raw'
 import bondedWgsl from '../../shaders/force_bonded.wgsl?raw'
 import integratePosWgsl from '../../shaders/integrate_pos.wgsl?raw'
 import integrateVelWgsl from '../../shaders/integrate_vel.wgsl?raw'
+import cullBoundaryWgsl from '../../shaders/cull_boundary.wgsl?raw'
 import thermoReduceWgsl from '../../shaders/thermostat_reduce.wgsl?raw'
 import thermoScaleWgsl from '../../shaders/thermostat_scale.wgsl?raw'
 import cellClearWgsl from '../../shaders/cell_clear.wgsl?raw'
@@ -29,7 +33,7 @@ import attractionWgsl from '../../shaders/attraction.wgsl?raw'
 import { KB } from '../params'
 
 const WORKGROUP_SIZE = 64
-const UNIFORM_BYTES = 96
+const UNIFORM_BYTES = 112
 const CAMERA_BYTES = 96
 const VIZ_BYTES = 64
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
@@ -82,6 +86,11 @@ export class WebGPUBackend implements IGPUBackend {
   private showForces = true
   private showBonds = true
   private showBox = false
+  private topologyBonds: Bond[] = []
+  private moleculeIds = new Int32Array(0)
+  private atomsByMolecule: number[][] = []
+  private atomParamsData = new Float32Array(0)
+  private boundaryCleanupPending = false
 
   // Buffers
   private uniformBuffer!: GPUBuffer
@@ -104,6 +113,7 @@ export class WebGPUBackend implements IGPUBackend {
   private uniformData!: ArrayBuffer
   private thermoTargetT = 300
   private thermoOn = 0
+  private boundaryMode: BoundaryMode = 'periodic'
 
   // Compute
   private computeLayout!: GPUBindGroupLayout
@@ -116,6 +126,7 @@ export class WebGPUBackend implements IGPUBackend {
     bonded: GPUComputePipeline
     integratePos: GPUComputePipeline
     integrateVel: GPUComputePipeline
+    cullBoundary: GPUComputePipeline
     thermoReduce: GPUComputePipeline
     thermoScale: GPUComputePipeline
     cellClear: GPUComputePipeline
@@ -144,6 +155,7 @@ export class WebGPUBackend implements IGPUBackend {
     params: SimParams,
     topology: Topology,
     initial: InitialState,
+    runtime: RuntimeConfig,
   ): Promise<void> {
     if (!navigator.gpu) {
       throw new Error('WebGPU is not available in this browser.')
@@ -163,6 +175,13 @@ export class WebGPUBackend implements IGPUBackend {
     this.params = params
     this.numAtoms = params.numAtoms
     this.numMol = params.numMolecules
+    this.topologyBonds = topology.bonds.slice()
+    this.moleculeIds = new Int32Array(topology.moleculeIds)
+    this.atomsByMolecule = this.groupAtomsByMolecule(topology.moleculeIds)
+    this.atomParamsData = new Float32Array(initial.atomParams)
+    this.thermoTargetT = runtime.targetTemperature
+    this.thermoOn = runtime.thermostatEnabled ? 1 : 0
+    this.boundaryMode = runtime.boundaryMode
     this.computeGrid()
     this.showAttractions = this.numAtoms <= ATTRACTION_MAX_ATOMS
 
@@ -204,7 +223,8 @@ export class WebGPUBackend implements IGPUBackend {
     this.numCells = gx * gy * gz
 
     const bigEnough = Math.min(gx, gy, gz) >= CELL_MIN_GRID
-    this.useCells = bigEnough && this.numAtoms >= CELL_MIN_ATOMS
+    this.useCells =
+      this.boundaryMode === 'periodic' && bigEnough && this.numAtoms >= CELL_MIN_ATOMS
 
     // Capacity per cell from mean density with headroom for fluctuations.
     const mean = this.numAtoms / Math.max(1, this.numCells)
@@ -296,6 +316,7 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(84, this.cellSize[1], true)
     dv.setFloat32(88, this.cellSize[2], true)
     dv.setUint32(92, this.useCells ? 1 : 0, true)
+    dv.setUint32(96, this.boundaryModeCode(), true)
 
     this.uniformData = buf
     this.device.queue.writeBuffer(this.uniformBuffer, 0, buf)
@@ -392,7 +413,19 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(40, this.bondR0, true)
     dv.setFloat32(44, this.bondK, true)
     dv.setFloat32(48, this.forceOpacity, true)
+    dv.setUint32(52, this.boundaryModeCode(), true)
     this.device.queue.writeBuffer(this.vizUniformBuffer, 0, buf)
+  }
+
+  private boundaryModeCode(): number {
+    switch (this.boundaryMode) {
+      case 'open':
+        return 1
+      case 'open-top':
+        return 2
+      default:
+        return 0
+    }
   }
 
   /** Hot-swappable thermostat control (RuntimeConfig, not SimParams). */
@@ -404,6 +437,48 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setFloat32(48, this.thermoTargetT, true)
     dv.setUint32(60, this.thermoOn, true)
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+  }
+
+  setBoundaryMode(mode: BoundaryMode): void {
+    if (this.boundaryMode === mode) return
+    const previousMode = this.boundaryMode
+    this.boundaryMode = mode
+    this.computeGrid()
+    if (this.uniformData) {
+      const dv = new DataView(this.uniformData)
+      dv.setUint32(92, this.useCells ? 1 : 0, true)
+      dv.setUint32(96, this.boundaryModeCode(), true)
+      this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+    }
+    if (this.vizUniformBuffer) {
+      const buf = new ArrayBuffer(4)
+      new DataView(buf).setUint32(0, this.boundaryModeCode(), true)
+      this.device.queue.writeBuffer(this.vizUniformBuffer, 52, buf)
+    }
+    this.boundaryCleanupPending = true
+    void this.sanitizeBoundaryTransition(previousMode, mode)
+  }
+
+  private groupAtomsByMolecule(moleculeIds: Int32Array): number[][] {
+    const groups = new Map<number, number[]>()
+    for (let i = 0; i < moleculeIds.length; i++) {
+      const id = moleculeIds[i]
+      const group = groups.get(id)
+      if (group) group.push(i)
+      else groups.set(id, [i])
+    }
+    return [...groups.values()]
+  }
+
+  private wrappedAxes(mode: BoundaryMode): [boolean, boolean, boolean] {
+    switch (mode) {
+      case 'periodic':
+        return [true, true, true]
+      case 'open-top':
+        return [true, false, true]
+      default:
+        return [false, false, false]
+    }
   }
 
   /** Live display controls (atom size, line opacity, overlay toggles). */
@@ -426,7 +501,7 @@ export class WebGPUBackend implements IGPUBackend {
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
@@ -496,6 +571,7 @@ export class WebGPUBackend implements IGPUBackend {
       }),
       integratePos: make(integratePosWgsl),
       integrateVel: make(integrateVelWgsl),
+      cullBoundary: make(cullBoundaryWgsl),
       thermoReduce: make(thermoReduceWgsl),
       thermoScale: make(thermoScaleWgsl),
       cellClear: make(cellClearWgsl),
@@ -512,6 +588,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     })
 
@@ -521,6 +598,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 0, resource: { buffer: this.cameraBuffer } },
         { binding: 1, resource: { buffer: this.posBuffer } },
         { binding: 2, resource: { buffer: this.atomParamsBuffer } },
+        { binding: 3, resource: { buffer: this.velBuffer } },
       ],
     })
 
@@ -551,6 +629,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     })
 
@@ -561,6 +640,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 1, resource: { buffer: this.vizUniformBuffer } },
         { binding: 2, resource: { buffer: this.posBuffer } },
         { binding: 3, resource: { buffer: this.molBondsBuffer } },
+        { binding: 4, resource: { buffer: this.velBuffer } },
       ],
     })
 
@@ -659,8 +739,9 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     })
     this.attractionBuildBindGroup = d.createBindGroup({
@@ -669,8 +750,9 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 0, resource: { buffer: this.vizUniformBuffer } },
         { binding: 1, resource: { buffer: this.posBuffer } },
         { binding: 2, resource: { buffer: this.atomParamsBuffer } },
-        { binding: 3, resource: { buffer: this.segCountBuffer } },
-        { binding: 4, resource: { buffer: this.segPairsBuffer } },
+        { binding: 3, resource: { buffer: this.velBuffer } },
+        { binding: 4, resource: { buffer: this.segCountBuffer } },
+        { binding: 5, resource: { buffer: this.segPairsBuffer } },
       ],
     })
     this.attractionBuildPipeline = d.createComputePipeline({
@@ -690,6 +772,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.attractionBindGroup = d.createBindGroup({
@@ -700,6 +783,7 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 2, resource: { buffer: this.posBuffer } },
         { binding: 3, resource: { buffer: this.segCountBuffer } },
         { binding: 4, resource: { buffer: this.segPairsBuffer } },
+        { binding: 5, resource: { buffer: this.velBuffer } },
       ],
     })
     this.attractionPipeline = d.createRenderPipeline({
@@ -756,6 +840,132 @@ export class WebGPUBackend implements IGPUBackend {
     pass.dispatchWorkgroups(ag)
   }
 
+  private cullForBoundary(pass?: GPUComputePassEncoder): void {
+    const ag = this.atomGroups()
+    if (pass) {
+      pass.setPipeline(this.pipelines.cullBoundary)
+      pass.dispatchWorkgroups(ag)
+      return
+    }
+
+    const encoder = this.device.createCommandEncoder()
+    const compute = encoder.beginComputePass()
+    compute.setBindGroup(0, this.computeBindGroup)
+    compute.setPipeline(this.pipelines.cullBoundary)
+    compute.dispatchWorkgroups(ag)
+    compute.end()
+    this.device.queue.submit([encoder.finish()])
+  }
+
+  private isOutsideDomain(position: [number, number, number], mode: BoundaryMode): boolean {
+    const [x, y, z] = position
+    if (mode === 'periodic') {
+      return x < 0 || x >= this.params.box[0] || y < 0 || y >= this.params.box[1] || z < 0 || z >= this.params.box[2]
+    }
+    if (mode === 'open-top') {
+      return x < 0 || x >= this.params.box[0] || y < 0 || z < 0 || z >= this.params.box[2]
+    }
+    return false
+  }
+
+  private invalidateAtom(
+    atomIndex: number,
+    positions: Float32Array,
+    velocities: Float32Array,
+    forces: Float32Array,
+  ): void {
+    positions[atomIndex * 4 + 0] = 1e9
+    positions[atomIndex * 4 + 1] = 1e9
+    positions[atomIndex * 4 + 2] = 1e9
+    positions[atomIndex * 4 + 3] = 0
+    velocities[atomIndex * 4 + 0] = 0
+    velocities[atomIndex * 4 + 1] = 0
+    velocities[atomIndex * 4 + 2] = 0
+    velocities[atomIndex * 4 + 3] = 0
+    forces[atomIndex * 4 + 0] = 0
+    forces[atomIndex * 4 + 1] = 0
+    forces[atomIndex * 4 + 2] = 0
+    forces[atomIndex * 4 + 3] = 0
+    this.atomParamsData[atomIndex * 4 + 0] = 0
+    this.atomParamsData[atomIndex * 4 + 1] = 0
+    this.atomParamsData[atomIndex * 4 + 2] = -1
+  }
+
+  private async sanitizeBoundaryTransition(
+    previousMode: BoundaryMode,
+    nextMode: BoundaryMode,
+  ): Promise<void> {
+    try {
+      const [prevWrapX, prevWrapY, prevWrapZ] = this.wrappedAxes(previousMode)
+      const [nextWrapX, nextWrapY, nextWrapZ] = this.wrappedAxes(nextMode)
+      const removedWrap = [prevWrapX && !nextWrapX, prevWrapY && !nextWrapY, prevWrapZ && !nextWrapZ] as const
+
+      const positions = await this.readbackPositions()
+      const velocities = await this.readbackVelocities()
+      const forces = new Float32Array(this.numAtoms * 4)
+      const invalidMolecules = new Set<number>()
+
+      for (const group of this.atomsByMolecule) {
+        for (const atomIndex of group) {
+          if (velocities[atomIndex * 4 + 3] <= 0) continue
+          const position: [number, number, number] = [
+            positions[atomIndex * 4 + 0],
+            positions[atomIndex * 4 + 1],
+            positions[atomIndex * 4 + 2],
+          ]
+          if (this.isOutsideDomain(position, nextMode)) {
+            invalidMolecules.add(this.moleculeIds[atomIndex])
+            break
+          }
+        }
+      }
+
+      if (removedWrap[0] || removedWrap[1] || removedWrap[2]) {
+        for (const bond of this.topologyBonds) {
+          if (
+            velocities[bond.i * 4 + 3] <= 0 ||
+            velocities[bond.j * 4 + 3] <= 0
+          ) {
+            continue
+          }
+
+          const dx = positions[bond.j * 4 + 0] - positions[bond.i * 4 + 0]
+          const dy = positions[bond.j * 4 + 1] - positions[bond.i * 4 + 1]
+          const dz = positions[bond.j * 4 + 2] - positions[bond.i * 4 + 2]
+
+          if (
+            (removedWrap[0] && Math.abs(dx) > this.params.box[0] * 0.5) ||
+            (removedWrap[1] && Math.abs(dy) > this.params.box[1] * 0.5) ||
+            (removedWrap[2] && Math.abs(dz) > this.params.box[2] * 0.5)
+          ) {
+            invalidMolecules.add(this.moleculeIds[bond.i])
+          }
+        }
+      }
+
+      if (invalidMolecules.size > 0) {
+        for (const group of this.atomsByMolecule) {
+          const moleculeId = this.moleculeIds[group[0]]
+          if (!invalidMolecules.has(moleculeId)) continue
+          for (const atomIndex of group) {
+            this.invalidateAtom(atomIndex, positions, velocities, forces)
+          }
+        }
+
+        this.device.queue.writeBuffer(this.posBuffer, 0, positions)
+        this.device.queue.writeBuffer(this.velBuffer, 0, velocities)
+        this.device.queue.writeBuffer(this.forceBuffer, 0, forces)
+        this.device.queue.writeBuffer(this.atomParamsBuffer, 0, this.atomParamsData)
+      } else {
+        this.cullForBoundary()
+      }
+
+      this.computeForces()
+    } finally {
+      this.boundaryCleanupPending = false
+    }
+  }
+
   /** Recompute forces for the current positions (a single force generation). */
   private computeForces(): void {
     const encoder = this.device.createCommandEncoder()
@@ -780,6 +990,7 @@ export class WebGPUBackend implements IGPUBackend {
   }
 
   stepSimulation(steps: number): void {
+    if (this.boundaryCleanupPending) return
     const encoder = this.device.createCommandEncoder()
     const pass = encoder.beginComputePass()
     pass.setBindGroup(0, this.computeBindGroup)
@@ -791,6 +1002,7 @@ export class WebGPUBackend implements IGPUBackend {
       // Velocity Verlet: half-kick + drift (uses a(t) already in buffer).
       pass.setPipeline(this.pipelines.integratePos)
       pass.dispatchWorkgroups(ag)
+      this.cullForBoundary(pass)
 
       // Rebuild the neighbor grid at the new positions, then a(t+dt).
       this.buildCells(pass, ag)
