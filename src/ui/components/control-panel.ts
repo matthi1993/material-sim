@@ -26,6 +26,7 @@ export class ControlPanel extends LitElement {
   @property({ type: Number }) targetTemperature = DEFAULT_RUNTIME.targetTemperature
   @property({ type: Boolean }) thermostatEnabled = DEFAULT_RUNTIME.thermostatEnabled
   @property({ type: Boolean }) forceGuardEnabled = DEFAULT_RUNTIME.forceGuardEnabled
+  @property({ type: Boolean }) reactiveBondingEnabled = DEFAULT_RUNTIME.reactiveBondingEnabled
   @property({ type: Number }) cutoffRadius = DEFAULT_RUNTIME.cutoffRadius
 
   @state() private showSetup = false
@@ -389,6 +390,9 @@ export class ControlPanel extends LitElement {
             })}
             ${this.runtimeToggle('Force Guard', this.forceGuardEnabled, {
               forceGuardEnabled: !this.forceGuardEnabled,
+            })}
+            ${this.runtimeToggle('Reactive Bonding', this.reactiveBondingEnabled, {
+              reactiveBondingEnabled: !this.reactiveBondingEnabled,
             })}
           </div>
           <div class="group">

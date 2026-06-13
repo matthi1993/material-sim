@@ -1,0 +1,12 @@
+{
+  "key": "chlorine-atom",
+  "label": "Chlorine atoms (Cl)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Cl"
+  ],
+  "nn": 0.24,
+  "unit": "atoms",
+  "order": 72
+}

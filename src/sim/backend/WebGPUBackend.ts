@@ -30,10 +30,14 @@ import bondWgsl from '../../shaders/bond.wgsl?raw'
 import boxWgsl from '../../shaders/box.wgsl?raw'
 import attractionBuildWgsl from '../../shaders/attraction_build.wgsl?raw'
 import attractionWgsl from '../../shaders/attraction.wgsl?raw'
+import reactiveProposeWgsl from '../../shaders/reactive_propose.wgsl?raw'
+import reactiveCommitWgsl from '../../shaders/reactive_commit.wgsl?raw'
+import reactiveForceWgsl from '../../shaders/reactive_force.wgsl?raw'
+import reactiveMaintainWgsl from '../../shaders/reactive_maintain.wgsl?raw'
 import { KB } from '../params'
 
 const WORKGROUP_SIZE = 64
-const UNIFORM_BYTES = 112
+const UNIFORM_BYTES = 128
 const CAMERA_BYTES = 128
 const VIZ_BYTES = 64
 const THERMOSTAT_TAU = 0.1 // ps, Berendsen coupling time
@@ -56,6 +60,8 @@ const LJ_ATTRACTION_THRESHOLD = 70
 // Bond stretch force magnitude (kJ/mol/nm) above which a bond reaches toward
 // full opacity; relaxed bonds stay faint (floor in bond.wgsl).
 const BOND_THRESHOLD = 150
+const REACTIVE_REBUILD_EVERY = 6
+const REACTIVE_BREAK_SCALE = 1.75
 
 export class WebGPUBackend implements IGPUBackend {
   private readonly canvas: HTMLCanvasElement
@@ -68,6 +74,8 @@ export class WebGPUBackend implements IGPUBackend {
   private numAtoms = 0
   private numMol = 0
   private numBonds = 0
+  private staticBondCount = 0
+  private maxReactiveBonds = 0
   private maxSeg = 0
   private bondR0 = 0
   private bondK = 0
@@ -107,6 +115,10 @@ export class WebGPUBackend implements IGPUBackend {
   private molRangesBuffer!: GPUBuffer
   private molBondsBuffer!: GPUBuffer
   private molAnglesBuffer!: GPUBuffer
+  private reactiveBondsBuffer!: GPUBuffer
+  private reactiveCountBuffer!: GPUBuffer
+  private atomBondCountsBuffer!: GPUBuffer
+  private reactiveProposalBuffer!: GPUBuffer
   private segCountBuffer!: GPUBuffer
   private segPairsBuffer!: GPUBuffer
   private cellHeadBuffer!: GPUBuffer
@@ -117,17 +129,25 @@ export class WebGPUBackend implements IGPUBackend {
   private thermoTargetT = 300
   private thermoOn = 0
   private forceGuardOn = 1
+  private reactiveOn = 1
   private boundaryMode: BoundaryMode = 'periodic'
+  private reactiveStepCounter = 0
 
   // Compute
   private computeLayout!: GPUBindGroupLayout
   private computeBindGroup!: GPUBindGroup
   private bondedLayout!: GPUBindGroupLayout
   private bondedBindGroup!: GPUBindGroup
+  private reactiveLayout!: GPUBindGroupLayout
+  private reactiveBindGroup!: GPUBindGroup
   private pipelines!: {
     lj: GPUComputePipeline
     coulomb: GPUComputePipeline
     bonded: GPUComputePipeline
+    reactivePropose: GPUComputePipeline
+    reactiveCommit: GPUComputePipeline
+    reactiveMaintain: GPUComputePipeline
+    reactiveForce: GPUComputePipeline
     integratePos: GPUComputePipeline
     integrateVel: GPUComputePipeline
     cullBoundary: GPUComputePipeline
@@ -142,6 +162,7 @@ export class WebGPUBackend implements IGPUBackend {
   private renderBindGroup!: GPUBindGroup
   private bondPipeline!: GPURenderPipeline
   private bondBindGroup!: GPUBindGroup
+  private reactiveBondBindGroup!: GPUBindGroup
   private boxPipeline!: GPURenderPipeline
   private boxBindGroup!: GPUBindGroup
   private attractionPipeline!: GPURenderPipeline
@@ -184,7 +205,9 @@ export class WebGPUBackend implements IGPUBackend {
     this.thermoTargetT = runtime.targetTemperature
     this.thermoOn = runtime.thermostatEnabled ? 1 : 0
     this.forceGuardOn = runtime.forceGuardEnabled ? 1 : 0
+    this.reactiveOn = runtime.reactiveBondingEnabled ? 1 : 0
     this.boundaryMode = runtime.boundaryMode
+    this.reactiveStepCounter = 0
     this.computeGrid()
     this.showAttractions = this.numAtoms <= ATTRACTION_MAX_ATOMS
 
@@ -323,6 +346,10 @@ export class WebGPUBackend implements IGPUBackend {
     dv.setUint32(92, this.useCells ? 1 : 0, true)
     dv.setUint32(96, this.boundaryModeCode(), true)
     dv.setUint32(100, this.forceGuardOn, true)
+    dv.setUint32(104, this.reactiveOn, true)
+    dv.setUint32(108, this.staticBondCount, true)
+    dv.setUint32(112, this.maxReactiveBonds, true)
+    dv.setFloat32(116, REACTIVE_BREAK_SCALE, true)
 
     this.uniformData = buf
     this.device.queue.writeBuffer(this.uniformBuffer, 0, buf)
@@ -333,9 +360,11 @@ export class WebGPUBackend implements IGPUBackend {
     const d = this.device
 
     this.numBonds = topology.bonds.length
+    this.staticBondCount = topology.bonds.length
     const firstBond = topology.bonds[0]
     this.bondR0 = firstBond ? firstBond.r0 : 0
     this.bondK = firstBond ? firstBond.k : 0
+    this.maxReactiveBonds = Math.max(64, Math.ceil(this.numAtoms * 1.5))
 
     // Per-molecule ranges into the flat bond/angle lists (4 u32 each). Consumed
     // by the bonded force kernel (group 1, binding 0).
@@ -363,6 +392,39 @@ export class WebGPUBackend implements IGPUBackend {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     })
     d.queue.writeBuffer(this.molBondsBuffer, 0, bondBuf)
+
+    // Runtime reactive bonds appended dynamically by compute passes.
+    this.reactiveBondsBuffer = d.createBuffer({
+      size: this.maxReactiveBonds * 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.reactiveCountBuffer = d.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.reactiveProposalBuffer = d.createBuffer({
+      size: this.numAtoms * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.atomBondCountsBuffer = d.createBuffer({
+      size: this.numAtoms * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+
+    const reactiveBondsInit = new Float32Array(this.maxReactiveBonds * 4)
+    d.queue.writeBuffer(this.reactiveBondsBuffer, 0, reactiveBondsInit)
+    d.queue.writeBuffer(this.reactiveCountBuffer, 0, new Uint32Array([0]))
+
+    const proposals = new Uint32Array(this.numAtoms)
+    proposals.fill(0xffffffff)
+    d.queue.writeBuffer(this.reactiveProposalBuffer, 0, proposals)
+
+    const initialBondCounts = new Uint32Array(this.numAtoms)
+    for (const b of topology.bonds) {
+      initialBondCounts[b.i]++
+      initialBondCounts[b.j]++
+    }
+    d.queue.writeBuffer(this.atomBondCountsBuffer, 0, initialBondCounts)
 
     // Flat angle list: 32 bytes each — (i, j-center, k, _) u32,
     // (theta0, kTheta, _, _) f32.
@@ -450,6 +512,14 @@ export class WebGPUBackend implements IGPUBackend {
     if (!this.uniformData) return
     const dv = new DataView(this.uniformData)
     dv.setUint32(100, this.forceGuardOn, true)
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
+  }
+
+  setReactiveBonding(enabled: boolean): void {
+    this.reactiveOn = enabled ? 1 : 0
+    if (!this.uniformData) return
+    const dv = new DataView(this.uniformData)
+    dv.setUint32(104, this.reactiveOn, true)
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData)
   }
 
@@ -619,6 +689,39 @@ export class WebGPUBackend implements IGPUBackend {
       bindGroupLayouts: [this.computeLayout, this.bondedLayout],
     })
 
+    this.reactiveLayout = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    })
+    this.reactiveBindGroup = d.createBindGroup({
+      layout: this.reactiveLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 1, resource: { buffer: this.posBuffer } },
+        { binding: 2, resource: { buffer: this.atomParamsBuffer } },
+        { binding: 3, resource: { buffer: this.forceBuffer } },
+        { binding: 4, resource: { buffer: this.velBuffer } },
+        { binding: 5, resource: { buffer: this.molBondsBuffer } },
+        { binding: 6, resource: { buffer: this.reactiveBondsBuffer } },
+        { binding: 7, resource: { buffer: this.reactiveCountBuffer } },
+        { binding: 8, resource: { buffer: this.atomBondCountsBuffer } },
+        { binding: 9, resource: { buffer: this.reactiveProposalBuffer } },
+      ],
+    })
+    const reactivePipelineLayout = d.createPipelineLayout({
+      bindGroupLayouts: [this.reactiveLayout],
+    })
+
     const make = (kernelSrc: string): GPUComputePipeline =>
       d.createComputePipeline({
         layout: pipelineLayout,
@@ -635,6 +738,34 @@ export class WebGPUBackend implements IGPUBackend {
         layout: bondedPipelineLayout,
         compute: {
           module: d.createShaderModule({ code: commonWgsl + '\n' + bondedWgsl }),
+          entryPoint: 'main',
+        },
+      }),
+      reactivePropose: d.createComputePipeline({
+        layout: reactivePipelineLayout,
+        compute: {
+          module: d.createShaderModule({ code: reactiveProposeWgsl }),
+          entryPoint: 'main',
+        },
+      }),
+      reactiveCommit: d.createComputePipeline({
+        layout: reactivePipelineLayout,
+        compute: {
+          module: d.createShaderModule({ code: reactiveCommitWgsl }),
+          entryPoint: 'main',
+        },
+      }),
+      reactiveMaintain: d.createComputePipeline({
+        layout: reactivePipelineLayout,
+        compute: {
+          module: d.createShaderModule({ code: reactiveMaintainWgsl }),
+          entryPoint: 'main',
+        },
+      }),
+      reactiveForce: d.createComputePipeline({
+        layout: reactivePipelineLayout,
+        compute: {
+          module: d.createShaderModule({ code: reactiveForceWgsl }),
           entryPoint: 'main',
         },
       }),
@@ -709,6 +840,17 @@ export class WebGPUBackend implements IGPUBackend {
         { binding: 1, resource: { buffer: this.vizUniformBuffer } },
         { binding: 2, resource: { buffer: this.posBuffer } },
         { binding: 3, resource: { buffer: this.molBondsBuffer } },
+        { binding: 4, resource: { buffer: this.velBuffer } },
+      ],
+    })
+
+    this.reactiveBondBindGroup = d.createBindGroup({
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: this.vizUniformBuffer } },
+        { binding: 2, resource: { buffer: this.posBuffer } },
+        { binding: 3, resource: { buffer: this.reactiveBondsBuffer } },
         { binding: 4, resource: { buffer: this.velBuffer } },
       ],
     })
@@ -1061,6 +1203,13 @@ export class WebGPUBackend implements IGPUBackend {
       pass.dispatchWorkgroups(this.molGroups())
     }
 
+    if (this.reactiveOn === 1) {
+      pass.setBindGroup(0, this.reactiveBindGroup)
+      pass.setPipeline(this.pipelines.reactiveForce)
+      pass.dispatchWorkgroups(Math.ceil(this.maxReactiveBonds / WORKGROUP_SIZE))
+      pass.setBindGroup(0, this.computeBindGroup)
+    }
+
     pass.end()
     this.device.queue.submit([encoder.finish()])
   }
@@ -1082,6 +1231,18 @@ export class WebGPUBackend implements IGPUBackend {
 
       // Rebuild the neighbor grid at the new positions, then a(t+dt).
       this.buildCells(pass, ag)
+
+      if (this.reactiveOn === 1 && (this.reactiveStepCounter % REACTIVE_REBUILD_EVERY) === 0) {
+        pass.setBindGroup(0, this.reactiveBindGroup)
+        pass.setPipeline(this.pipelines.reactiveMaintain)
+        pass.dispatchWorkgroups(1)
+        pass.setPipeline(this.pipelines.reactivePropose)
+        pass.dispatchWorkgroups(ag)
+        pass.setPipeline(this.pipelines.reactiveCommit)
+        pass.dispatchWorkgroups(ag)
+        pass.setBindGroup(0, this.computeBindGroup)
+      }
+
       pass.setPipeline(this.pipelines.lj)
       pass.dispatchWorkgroups(ag)
       pass.setPipeline(this.pipelines.coulomb)
@@ -1090,6 +1251,12 @@ export class WebGPUBackend implements IGPUBackend {
         pass.setBindGroup(1, this.bondedBindGroup)
         pass.setPipeline(this.pipelines.bonded)
         pass.dispatchWorkgroups(mg)
+      }
+      if (this.reactiveOn === 1) {
+        pass.setBindGroup(0, this.reactiveBindGroup)
+        pass.setPipeline(this.pipelines.reactiveForce)
+        pass.dispatchWorkgroups(Math.ceil(this.maxReactiveBonds / WORKGROUP_SIZE))
+        pass.setBindGroup(0, this.computeBindGroup)
       }
 
       // Second half-kick.
@@ -1101,6 +1268,7 @@ export class WebGPUBackend implements IGPUBackend {
       pass.dispatchWorkgroups(1)
       pass.setPipeline(this.pipelines.thermoScale)
       pass.dispatchWorkgroups(ag)
+      this.reactiveStepCounter++
     }
 
     pass.end()
@@ -1158,11 +1326,18 @@ export class WebGPUBackend implements IGPUBackend {
       pass.draw(2, 12 * tileCount)
     }
 
-    // Intramolecular bonds (lines).
-    if (this.numBonds > 0 && this.showBonds) {
+    // Intramolecular + reactive bonds (lines).
+    if (this.showBonds && (this.numBonds > 0 || this.reactiveOn === 1)) {
       pass.setPipeline(this.bondPipeline)
-      pass.setBindGroup(0, this.bondBindGroup)
-      pass.draw(2, this.numBonds * tileCount)
+      if (this.numBonds > 0) {
+        pass.setBindGroup(0, this.bondBindGroup)
+        pass.draw(2, this.numBonds * tileCount)
+      }
+
+      if (this.reactiveOn === 1) {
+        pass.setBindGroup(0, this.reactiveBondBindGroup)
+        pass.draw(2, this.maxReactiveBonds * tileCount)
+      }
     }
 
     // Attractive interactions: Coulomb + Lennard-Jones (lines).
@@ -1223,6 +1398,48 @@ export class WebGPUBackend implements IGPUBackend {
     return this.readback(this.velBuffer)
   }
 
+  async readbackReactiveBondPairs(): Promise<Uint32Array> {
+    const countStaging = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    })
+    const countEncoder = this.device.createCommandEncoder()
+    countEncoder.copyBufferToBuffer(this.reactiveCountBuffer, 0, countStaging, 0, 16)
+    this.device.queue.submit([countEncoder.finish()])
+    await countStaging.mapAsync(GPUMapMode.READ)
+    const countWords = new Uint32Array(countStaging.getMappedRange().slice(0))
+    countStaging.unmap()
+    countStaging.destroy()
+
+    const count = Math.min(this.maxReactiveBonds, countWords[0] ?? 0)
+    if (count <= 0) return new Uint32Array(0)
+
+    const bytes = count * 16
+    const bondsStaging = this.device.createBuffer({
+      size: bytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    })
+    const encoder = this.device.createCommandEncoder()
+    encoder.copyBufferToBuffer(this.reactiveBondsBuffer, 0, bondsStaging, 0, bytes)
+    this.device.queue.submit([encoder.finish()])
+    await bondsStaging.mapAsync(GPUMapMode.READ)
+    const words = new Uint32Array(bondsStaging.getMappedRange().slice(0))
+    bondsStaging.unmap()
+    bondsStaging.destroy()
+
+    const out = new Uint32Array(count * 2)
+    let m = 0
+    for (let b = 0; b < count; b++) {
+      const i = words[b * 4 + 0]
+      const j = words[b * 4 + 1]
+      if (i === 0xffffffff || j === 0xffffffff || i >= this.numAtoms || j >= this.numAtoms || i === j) continue
+      out[m * 2 + 0] = i
+      out[m * 2 + 1] = j
+      m++
+    }
+    return out.slice(0, m * 2)
+  }
+
   private async readback(src: GPUBuffer): Promise<Float32Array> {
     const bytes = this.numAtoms * 16
     const staging = this.device.createBuffer({
@@ -1252,6 +1469,10 @@ export class WebGPUBackend implements IGPUBackend {
     this.molRangesBuffer?.destroy()
     this.molBondsBuffer?.destroy()
     this.molAnglesBuffer?.destroy()
+    this.reactiveBondsBuffer?.destroy()
+    this.reactiveCountBuffer?.destroy()
+    this.atomBondCountsBuffer?.destroy()
+    this.reactiveProposalBuffer?.destroy()
     this.segCountBuffer?.destroy()
     this.segPairsBuffer?.destroy()
     this.cellHeadBuffer?.destroy()

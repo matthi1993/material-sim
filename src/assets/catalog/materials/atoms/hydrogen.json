@@ -1,0 +1,12 @@
+{
+  "key": "hydrogen-atom",
+  "label": "Hydrogen atoms (H)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "H"
+  ],
+  "nn": 0.16,
+  "unit": "atoms",
+  "order": 70
+}

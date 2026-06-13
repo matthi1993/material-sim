@@ -1,0 +1,12 @@
+{
+  "key": "nitrogen-atom",
+  "label": "Nitrogen atoms (N)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "N"
+  ],
+  "nn": 0.19,
+  "unit": "atoms",
+  "order": 74
+}

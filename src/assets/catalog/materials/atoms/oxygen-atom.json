@@ -1,0 +1,12 @@
+{
+  "key": "oxygen-atom",
+  "label": "Oxygen atoms (O)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "O"
+  ],
+  "nn": 0.19,
+  "unit": "atoms",
+  "order": 73
+}

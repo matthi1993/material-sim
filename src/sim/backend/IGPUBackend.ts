@@ -29,6 +29,9 @@ export interface IGPUBackend {
   /** Hot-swappable force guard to cap extreme impulse spikes. */
   setForceGuard(enabled: boolean): void
 
+  /** Hot-swappable runtime reactive bond formation toggle. */
+  setReactiveBonding(enabled: boolean): void
+
   /** Hot-swappable nonbonded cutoff radius (nm). */
   setCutoffRadius(cutoffRadius: number): void
 
@@ -46,6 +49,9 @@ export interface IGPUBackend {
 
   /** Debug/stats only. Returns (vx,vy,vz,mass) per atom. */
   readbackVelocities(): Promise<Float32Array>
+
+  /** Debug/stats only. Returns live reactive bond pairs (i,j). */
+  readbackReactiveBondPairs(): Promise<Uint32Array>
 
   destroy(): void
 }

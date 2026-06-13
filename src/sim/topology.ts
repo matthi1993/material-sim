@@ -45,6 +45,40 @@ type Unit =
   | { kind: 'molecule'; tmpl: MoleculeTemplate; nn: number }
   | { kind: 'mono'; el: ElementDef; nn: number }
 
+interface ReactiveElementRule {
+  maxBonds: number
+  covalentRadius: number // nm
+  bondStiffness: number // kJ/mol/nm^2
+}
+
+interface ReactiveBondCandidate {
+  i: number
+  j: number
+  distance: number
+  score: number
+}
+
+interface ReactiveBond {
+  i: number
+  j: number
+  r0: number
+  k: number
+}
+
+// Generic reactive-bond model: element-local parameters + valence-limited
+// matching. To extend bonding, add more element entries below.
+const REACTIVE_ELEMENTS: Readonly<Record<number, ReactiveElementRule>> = {
+  [ELEMENTS.H.id]: { maxBonds: 1, covalentRadius: 0.031, bondStiffness: 120000 },
+  [ELEMENTS.C.id]: { maxBonds: 4, covalentRadius: 0.076, bondStiffness: 160000 },
+  [ELEMENTS.O.id]: { maxBonds: 2, covalentRadius: 0.066, bondStiffness: 170000 },
+  [ELEMENTS.N.id]: { maxBonds: 3, covalentRadius: 0.071, bondStiffness: 155000 },
+  [ELEMENTS.Cl.id]: { maxBonds: 1, covalentRadius: 0.102, bondStiffness: 110000 },
+  [ELEMENTS.Br.id]: { maxBonds: 1, covalentRadius: 0.12, bondStiffness: 90000 },
+}
+
+const REACTIVE_MIN_SCALE = 0.65
+const REACTIVE_CAPTURE_SCALE = 1.5
+
 /** Expand a mixture component into the list of grid-site units it contributes. */
 function expandComponent(mat: MaterialDef, count: number): Unit[] {
   const n = Math.max(0, Math.round(count))
@@ -163,7 +197,7 @@ export function buildSystem(config: SimConfig, cutoffRadius: number): BuiltSyste
   const bonds: Bond[] = []
   const angles: Angle[] = []
   const dihedrals: Dihedral[] = []
-  const molRanges = new Uint32Array(Math.max(1, nBondedMol) * 4)
+  const molRangesData: number[] = []
 
   const rand = mulberry32(0x9e3779b9)
   const gauss = makeGaussian(rand)
@@ -207,10 +241,7 @@ export function buildSystem(config: SimConfig, cutoffRadius: number): BuiltSyste
       for (const an of tmpl.angles) {
         angles.push({ i: base + an.a, j: base + an.b, k: base + an.c, theta0: an.theta0, kTheta: an.k })
       }
-      molRanges[molIndex * 4 + 0] = bondStart
-      molRanges[molIndex * 4 + 1] = tmpl.bonds.length
-      molRanges[molIndex * 4 + 2] = angleStart
-      molRanges[molIndex * 4 + 3] = tmpl.angles.length
+      molRangesData.push(bondStart, tmpl.bonds.length, angleStart, tmpl.angles.length)
       molIndex++
     } else {
       const el = unit.el
@@ -229,6 +260,18 @@ export function buildSystem(config: SimConfig, cutoffRadius: number): BuiltSyste
   // different molecules before the first force evaluation.
   relaxOverlaps(positions, atomParams, moleculeIds, config.box)
 
+  const reactiveBondedMolecules = inferReactiveBonds(
+    positions,
+    atomTypeIds,
+    moleculeIds,
+    atomParams,
+    bonds,
+    angles,
+    molRangesData,
+    molId,
+    config.box,
+  )
+
   initVelocities(velocities, config.temperature, gauss)
 
   const atomTypes: AtomType[] = [...usedElements.values()].map((el) => ({
@@ -246,13 +289,13 @@ export function buildSystem(config: SimConfig, cutoffRadius: number): BuiltSyste
     bonds,
     angles,
     dihedrals,
-    molRanges,
+    molRanges: new Uint32Array(molRangesData.length > 0 ? molRangesData : [0, 0, 0, 0]),
   }
 
   const params: SimParams = {
     dt: config.dt,
     numAtoms: nAtoms,
-    numMolecules: nBondedMol,
+    numMolecules: nBondedMol + reactiveBondedMolecules,
     cutoffRadius,
     box: [bx, by, bz],
     coulombConstant: COULOMB_K,
@@ -497,4 +540,174 @@ function relaxOverlaps(
       positions[i * 4 + 2] = wrap(positions[i * 4 + 2] + shifts[m * 3 + 2] / h, box[2])
     }
   }
+}
+
+function inferReactiveBonds(
+  positions: Float32Array,
+  atomTypeIds: Int32Array,
+  moleculeIds: Int32Array,
+  atomParams: Float32Array,
+  bonds: Bond[],
+  angles: Angle[],
+  molRangesData: number[],
+  nextMolId: number,
+  box: Vec3,
+): number {
+  const n = atomTypeIds.length
+  if (n < 2) return 0
+
+  const initialBondCount = new Uint8Array(n)
+  for (const b of bonds) {
+    if (b.i >= 0 && b.i < n) initialBondCount[b.i]++
+    if (b.j >= 0 && b.j < n) initialBondCount[b.j]++
+  }
+
+  const maxBonds = new Uint8Array(n)
+  const radii = new Float32Array(n)
+  const stiffness = new Float32Array(n)
+  const reactiveAtom = new Uint8Array(n)
+
+  for (let i = 0; i < n; i++) {
+    const rule = REACTIVE_ELEMENTS[atomTypeIds[i]]
+    if (!rule) continue
+    maxBonds[i] = rule.maxBonds
+    radii[i] = rule.covalentRadius
+    stiffness[i] = rule.bondStiffness
+    if (initialBondCount[i] === 0) reactiveAtom[i] = 1
+  }
+
+  const candidates: ReactiveBondCandidate[] = []
+  for (let i = 0; i < n; i++) {
+    if (reactiveAtom[i] === 0 || maxBonds[i] === 0) continue
+    const ix = positions[i * 4 + 0]
+    const iy = positions[i * 4 + 1]
+    const iz = positions[i * 4 + 2]
+    for (let j = i + 1; j < n; j++) {
+      if (reactiveAtom[j] === 0 || maxBonds[j] === 0) continue
+      if (moleculeIds[i] === moleculeIds[j]) continue
+
+      let dx = ix - positions[j * 4 + 0]
+      let dy = iy - positions[j * 4 + 1]
+      let dz = iz - positions[j * 4 + 2]
+      dx -= box[0] * Math.round(dx / box[0])
+      dy -= box[1] * Math.round(dy / box[1])
+      dz -= box[2] * Math.round(dz / box[2])
+
+      const r2 = dx * dx + dy * dy + dz * dz
+      if (r2 < 1e-10) continue
+
+      const cov = radii[i] + radii[j]
+      if (cov <= 0) continue
+      const rMin = cov * REACTIVE_MIN_SCALE
+      const rMax = cov * REACTIVE_CAPTURE_SCALE
+      if (r2 < rMin * rMin || r2 > rMax * rMax) continue
+
+      const distance = Math.sqrt(r2)
+      candidates.push({
+        i,
+        j,
+        distance,
+        score: distance / cov,
+      })
+    }
+  }
+
+  if (candidates.length === 0) return 0
+  candidates.sort((a, b) => a.score - b.score)
+
+  const parent = new Int32Array(n)
+  const rank = new Uint8Array(n)
+  for (let i = 0; i < n; i++) parent[i] = i
+
+  const find = (x: number): number => {
+    let r = x
+    while (parent[r] !== r) r = parent[r]
+    while (parent[x] !== x) {
+      const p = parent[x]
+      parent[x] = r
+      x = p
+    }
+    return r
+  }
+
+  const unite = (a: number, b: number): void => {
+    let ra = find(a)
+    let rb = find(b)
+    if (ra === rb) return
+    if (rank[ra] < rank[rb]) {
+      const t = ra
+      ra = rb
+      rb = t
+    }
+    parent[rb] = ra
+    if (rank[ra] === rank[rb]) rank[ra]++
+  }
+
+  for (const b of bonds) unite(b.i, b.j)
+
+  const bondCount = initialBondCount.slice()
+  const picked: ReactiveBond[] = []
+  for (const c of candidates) {
+    if (bondCount[c.i] >= maxBonds[c.i]) continue
+    if (bondCount[c.j] >= maxBonds[c.j]) continue
+    const cov = radii[c.i] + radii[c.j]
+    const r0 = Math.max(cov * 0.95, c.distance * 0.98)
+    const k = Math.sqrt(stiffness[c.i] * stiffness[c.j])
+    picked.push({ i: c.i, j: c.j, r0, k })
+    bondCount[c.i]++
+    bondCount[c.j]++
+    unite(c.i, c.j)
+  }
+
+  if (picked.length === 0) return 0
+
+  const componentAtoms = new Map<number, number[]>()
+  const seenAtom = new Uint8Array(n)
+  for (const b of picked) {
+    const ri = find(b.i)
+    const rj = find(b.j)
+    if (ri !== rj) continue
+    if (!seenAtom[b.i]) {
+      seenAtom[b.i] = 1
+      const a = componentAtoms.get(ri)
+      if (a) a.push(b.i)
+      else componentAtoms.set(ri, [b.i])
+    }
+    if (!seenAtom[b.j]) {
+      seenAtom[b.j] = 1
+      const a = componentAtoms.get(ri)
+      if (a) a.push(b.j)
+      else componentAtoms.set(ri, [b.j])
+    }
+  }
+
+  const grouped = new Map<number, ReactiveBond[]>()
+  for (const b of picked) {
+    const root = find(b.i)
+    const list = grouped.get(root)
+    if (list) list.push(b)
+    else grouped.set(root, [b])
+  }
+
+  let createdMolecules = 0
+  let molId = nextMolId
+  for (const [root, groupBonds] of grouped) {
+    const atoms = componentAtoms.get(root)
+    if (!atoms || atoms.length === 0) continue
+
+    const assignedMolId = molId++
+    for (const atom of atoms) {
+      moleculeIds[atom] = assignedMolId
+      atomParams[atom * 4 + 2] = assignedMolId
+    }
+
+    const bondStart = bonds.length
+    for (const rb of groupBonds) {
+      bonds.push({ i: rb.i, j: rb.j, r0: rb.r0, k: rb.k })
+    }
+    molRangesData.push(bondStart, groupBonds.length, angles.length, 0)
+    createdMolecules++
+  }
+
+  return createdMolecules
 }

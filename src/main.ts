@@ -7,7 +7,7 @@ import { SimulationEngine } from './sim/SimulationEngine'
 import { Renderer, type AxisKey, type ProjectionMode } from './ui/renderer'
 import { buildSystem } from './sim/topology'
 import { DEFAULT_RUNTIME, DEFAULT_VIEW, type SimConfig } from './sim/params'
-import type { ViewOptions } from './sim/types'
+import type { StructureEntry, ViewOptions } from './sim/types'
 import {
   isSavedSimulationFile,
   type SavedAtomState,
@@ -24,12 +24,14 @@ let currentRuntime = { ...DEFAULT_RUNTIME }
 let currentView: ViewOptions = { ...DEFAULT_VIEW }
 let currentProjection: ProjectionMode = 'perspective'
 let currentConfig: SimConfig | null = null
+let currentStructureEntries: StructureEntry[] = []
 
 app.stepsPerFrame = currentRuntime.stepsPerFrame
 app.boundaryMode = currentRuntime.boundaryMode
 app.targetTemperature = currentRuntime.targetTemperature
 app.thermostatEnabled = currentRuntime.thermostatEnabled
 app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+app.reactiveBondingEnabled = currentRuntime.reactiveBondingEnabled
 app.cutoffRadius = currentRuntime.cutoffRadius
 
 // Let the orientation gizmo read the live camera frame each frame.
@@ -53,6 +55,10 @@ async function restart(config: SimConfig, atomState?: SavedAtomState): Promise<v
     engine.setCameraProvider(() => renderer!.getCamera())
     engine.setStatsListener((s) => {
       app.stats = s
+    })
+    engine.setStructureListener((entries) => {
+      currentStructureEntries = entries
+      app.legendEntries = entries
     })
 
     const { params, topology, initial } = buildSystem(config, currentRuntime.cutoffRadius)
@@ -81,6 +87,7 @@ async function restart(config: SimConfig, atomState?: SavedAtomState): Promise<v
     app.targetTemperature = currentRuntime.targetTemperature
     app.thermostatEnabled = currentRuntime.thermostatEnabled
     app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+    app.reactiveBondingEnabled = currentRuntime.reactiveBondingEnabled
     app.cutoffRadius = currentRuntime.cutoffRadius
 
     await engine.start(params, topology, initial, runtime)
@@ -90,6 +97,7 @@ async function restart(config: SimConfig, atomState?: SavedAtomState): Promise<v
     engine.setViewOptions(currentView)
     currentConfig = cloneConfig(config)
     app.activeConfig = cloneConfig(config)
+    app.legendEntries = currentStructureEntries
     app.running = true
   } catch (err) {
     console.error('Simulation failed to start:', err)
@@ -150,6 +158,7 @@ app.addEventListener('file-load', (event) => {
     app.targetTemperature = currentRuntime.targetTemperature
     app.thermostatEnabled = currentRuntime.thermostatEnabled
     app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+    app.reactiveBondingEnabled = currentRuntime.reactiveBondingEnabled
     app.cutoffRadius = currentRuntime.cutoffRadius
     engine?.setRuntime(currentRuntime)
   }
@@ -180,6 +189,7 @@ app.addEventListener('runtime-change', (e) => {
   app.targetTemperature = currentRuntime.targetTemperature
   app.thermostatEnabled = currentRuntime.thermostatEnabled
   app.forceGuardEnabled = currentRuntime.forceGuardEnabled
+  app.reactiveBondingEnabled = currentRuntime.reactiveBondingEnabled
   app.cutoffRadius = currentRuntime.cutoffRadius
   engine?.setRuntime(currentRuntime)
 })

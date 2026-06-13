@@ -1,7 +1,7 @@
 import { LitElement, css, html } from 'lit'
 import { customElement, property, query, state } from 'lit/decorators.js'
-import { DEFAULT_RUNTIME, MATERIALS, type SimConfig } from '../../sim/params'
-import type { BoundaryMode, SimStats } from '../../sim/types'
+import { DEFAULT_RUNTIME, type SimConfig } from '../../sim/params'
+import type { BoundaryMode, SimStats, StructureEntry } from '../../sim/types'
 import type { CameraBasis } from '../renderer'
 import './control-panel'
 import './stats-overlay'
@@ -24,12 +24,13 @@ export class SimApp extends LitElement {
   @property({ type: Number }) targetTemperature = DEFAULT_RUNTIME.targetTemperature
   @property({ type: Boolean }) thermostatEnabled = DEFAULT_RUNTIME.thermostatEnabled
   @property({ type: Boolean }) forceGuardEnabled = DEFAULT_RUNTIME.forceGuardEnabled
+  @property({ type: Boolean }) reactiveBondingEnabled = DEFAULT_RUNTIME.reactiveBondingEnabled
   @property({ type: Number }) cutoffRadius = DEFAULT_RUNTIME.cutoffRadius
 
   /** Live camera frame source for the orientation gizmo (set by main.ts). */
   @property({ attribute: false }) basisProvider: (() => CameraBasis | null) | null = null
 
-  @state() private activeSymbols: string[] = []
+  @property({ attribute: false }) legendEntries: StructureEntry[] = []
   @state() private fileMenuOpen = false
 
   @query('canvas') private canvasEl!: HTMLCanvasElement
@@ -41,14 +42,10 @@ export class SimApp extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
-    // config-change bubbles up from the control panel; mirror it into the
-    // legend. It keeps bubbling (composed) so main.ts still restarts the run.
-    this.addEventListener('config-change', this.onConfigChange)
     document.addEventListener('click', this.onDocumentClick)
   }
 
   disconnectedCallback(): void {
-    this.removeEventListener('config-change', this.onConfigChange)
     document.removeEventListener('click', this.onDocumentClick)
     super.disconnectedCallback()
   }
@@ -99,23 +96,6 @@ export class SimApp extends LitElement {
     }
   }
 
-  private onConfigChange = (e: Event): void => {
-    const config = (e as CustomEvent<SimConfig>).detail
-    const seen = new Set<string>()
-    const symbols: string[] = []
-    for (const comp of config.components) {
-      const mat = MATERIALS[comp.materialKey]
-      if (!mat || comp.count <= 0) continue
-      for (const el of mat.elements) {
-        if (!seen.has(el.symbol)) {
-          seen.add(el.symbol)
-          symbols.push(el.symbol)
-        }
-      }
-    }
-    this.activeSymbols = symbols
-  }
-
   render() {
     return html`
       <header class="topbar" @click=${(event: Event) => event.stopPropagation()}>
@@ -150,6 +130,7 @@ export class SimApp extends LitElement {
         .targetTemperature=${this.targetTemperature}
         .thermostatEnabled=${this.thermostatEnabled}
         .forceGuardEnabled=${this.forceGuardEnabled}
+        .reactiveBondingEnabled=${this.reactiveBondingEnabled}
         .cutoffRadius=${this.cutoffRadius}
       ></control-panel>
       <div class="right-stack">
@@ -158,7 +139,7 @@ export class SimApp extends LitElement {
         ></stats-overlay>
         <view-gizmo .basisProvider=${this.basisProvider}></view-gizmo>
       </div>
-      <atom-legend .symbols=${this.activeSymbols}></atom-legend>
+      <atom-legend .entries=${this.legendEntries}></atom-legend>
     `
   }
 
