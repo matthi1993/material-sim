@@ -1,0 +1,12 @@
+{
+  "key": "carbon-atom",
+  "label": "Carbon atoms (C)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "C"
+  ],
+  "nn": 0.2,
+  "unit": "atoms",
+  "order": 71
+}

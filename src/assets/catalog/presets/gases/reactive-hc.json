@@ -1,0 +1,27 @@
+{
+  "key": "reactive-hc",
+  "label": "Reactive H/C mix",
+  "topic": "gases",
+  "topicLabel": "Gases",
+  "topicOrder": 20,
+  "order": 65,
+  "config": {
+    "components": [
+      {
+        "materialKey": "carbon-atom",
+        "count": 22
+      },
+      {
+        "materialKey": "hydrogen-atom",
+        "count": 76
+      }
+    ],
+    "box": [
+      1.8,
+      1.8,
+      1.8
+    ],
+    "dt": 0.00025,
+    "temperature": 180
+  }
+}

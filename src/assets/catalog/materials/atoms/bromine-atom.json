@@ -1,0 +1,12 @@
+{
+  "key": "bromine-atom",
+  "label": "Bromine atoms (Br)",
+  "kind": "atomic",
+  "category": "atoms",
+  "elements": [
+    "Br"
+  ],
+  "nn": 0.26,
+  "unit": "atoms",
+  "order": 75
+}

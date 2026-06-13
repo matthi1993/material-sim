@@ -196,6 +196,7 @@ export const DEFAULT_RUNTIME: RuntimeConfig = {
   targetTemperature: 300,
   thermostatEnabled: true,
   forceGuardEnabled: true,
+  reactiveBondingEnabled: true,
   cutoffRadius: 0.9,
   stepsPerFrame: 8,
   boundaryMode: 'periodic',

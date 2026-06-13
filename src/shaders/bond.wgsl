@@ -72,6 +72,7 @@ fn vs(
   let bond = bonds[bondIndex];
   let ia = bond.ij.x;
   let ib = bond.ij.y;
+  let kb = bond.par.y;
   if (tileIndex >= tileCount || vel[ia].w <= 0.0 || vel[ib].w <= 0.0) {
     var dead: VSOut;
     dead.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
@@ -79,8 +80,14 @@ fn vs(
     dead.alpha = 0.0;
     return dead;
   }
+  if (kb <= 0.0) {
+    var dead: VSOut;
+    dead.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    dead.color = vec3<f32>(0.0);
+    dead.alpha = 0.0;
+    return dead;
+  }
   let r0 = bond.par.x;
-  let kb = bond.par.y;
 
   let tx = tileIndex % tileX;
   let ty = (tileIndex / tileX) % tileY;

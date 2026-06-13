@@ -24,6 +24,7 @@ export interface RuntimeConfig {
   targetTemperature: number // K
   thermostatEnabled: boolean
   forceGuardEnabled: boolean
+  reactiveBondingEnabled: boolean
   cutoffRadius: number // nm
   stepsPerFrame: number
   boundaryMode: BoundaryMode
@@ -121,4 +122,10 @@ export interface SimStats {
   numAtoms: number
   temperature: number // K (measured, may be NaN before first sample)
   simulatedTimePs: number // cumulative simulated time since start (ps)
+}
+
+export interface StructureEntry {
+  name: string
+  count: number
+  kind: 'molecule' | 'atom'
 }
