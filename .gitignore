@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local deploy helper (kept untracked)
+deploy-github-pages.local.sh
